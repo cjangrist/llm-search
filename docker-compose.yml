@@ -1,0 +1,12 @@
+services:
+  llm-search:
+    build: .
+    ports:
+      - "8041:8080"
+    volumes:
+      - ~/.claude/.credentials.json:/mnt/creds/claude/.credentials.json:ro
+      - ~/.codex/auth.json:/mnt/creds/codex/auth.json:ro
+      - ~/.codex/config.toml:/mnt/creds/codex/config.toml:ro
+      - ~/.gemini/oauth_creds.json:/mnt/creds/gemini/oauth_creds.json:ro
+      - ~/.gemini/google_accounts.json:/mnt/creds/gemini/google_accounts.json:ro
+      - ~/.gemini/settings.json:/mnt/creds/gemini/settings.json:ro

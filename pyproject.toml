@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-search"
+version = "0.1.0"
+description = "OpenAI-compatible web search API wrapping Claude Code, Codex, and Gemini CLIs"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = [
+    "flask>=3.0.0",
+    "python-dotenv>=1.0.0",
+    "sh>=2.0.0",
+    "gunicorn>=22.0.0",
+]
+
+[project.scripts]
+llm-search = "llm_search.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+llm_search = ["prompts/*.md"]
