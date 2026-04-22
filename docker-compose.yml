@@ -4,6 +4,8 @@ services:
     restart: unless-stopped
     ports:
       - "8041:8080"
+    environment:
+      - KIMI_API_KEY
     volumes:
       - ~/.claude/.credentials.json:/mnt/creds/claude/.credentials.json:ro
       - ~/.codex/auth.json:/mnt/creds/codex/auth.json:ro

@@ -22,6 +22,31 @@ from llm_search.prompts import load_system_prompt
 logger = logging.getLogger(__name__)
 
 SEARCH_TOOL_NAMES = {"SearchWeb"}
+FETCH_TOOL_NAMES = {"FetchURL"}
+GROUNDING_TOOL_NAMES = SEARCH_TOOL_NAMES | FETCH_TOOL_NAMES
+FETCHURL_SYSTEM_META_PATTERN = re.compile(r"<system>.*?</system>\s*", re.DOTALL)
+
+API_KEY_CONFIG_TEMPLATE = '''default_model = "direct/kimi-for-coding"
+
+[models."direct/kimi-for-coding"]
+provider = "direct-api"
+model = "kimi-for-coding"
+max_context_size = 262144
+capabilities = ["thinking"]
+
+[providers.direct-api]
+type = "kimi"
+base_url = "https://api.kimi.com/coding/v1"
+api_key = "{api_key}"
+
+[services.moonshot_search]
+base_url = "https://api.kimi.com/coding/v1/search"
+api_key = "{api_key}"
+
+[services.moonshot_fetch]
+base_url = "https://api.kimi.com/coding/v1/fetch"
+api_key = "{api_key}"
+'''
 
 
 def call_kimi(prompt, model, timeout_seconds, stderr_log_path=None):
@@ -50,8 +75,25 @@ def call_kimi(prompt, model, timeout_seconds, stderr_log_path=None):
     if model:
         kimi_arguments = ["-m", model, *kimi_arguments]
 
-    redacted_args = [argument for argument in kimi_arguments if len(argument) < 200]
-    logger.info("Running: kimi %s [+ -p <%d-char prompt>]", " ".join(redacted_args), len(augmented_prompt))
+    kimi_api_key = os.getenv("KIMI_API_KEY", "").strip()
+    if kimi_api_key:
+        logger.info("call_kimi: using KIMI_API_KEY env (%d chars) via inline --config override", len(kimi_api_key))
+        config_override = API_KEY_CONFIG_TEMPLATE.format(api_key=kimi_api_key)
+        kimi_arguments = ["--config", config_override, *kimi_arguments]
+    else:
+        logger.info("call_kimi: no KIMI_API_KEY env set, falling back to OAuth config")
+
+    redacted_args = []
+    skip_next = False
+    for argument in kimi_arguments:
+        if skip_next:
+            redacted_args.append("<redacted>")
+            skip_next = False
+            continue
+        redacted_args.append(argument)
+        if argument in {"-p", "--prompt", "-c", "--command", "--config"}:
+            skip_next = True
+    logger.info("Running: kimi %s (prompt=%d chars)", " ".join(redacted_args), len(augmented_prompt))
 
     stderr_file = open(stderr_log_path, "w") if stderr_log_path else None
     try:
@@ -145,6 +187,55 @@ def find_search_tool_call_ids(stream_events):
     return search_ids
 
 
+def find_fetchurl_tool_call_urls(stream_events):
+    """Map tool_call id -> URL for every FetchURL call the model made.
+
+    Kimi's FetchURL tool takes {"url": "..."} as arguments and returns the fetched
+    page content as a list of text parts. Those responses don't have Title/URL/Summary
+    metadata inline the way SearchWeb responses do, so we need to pair each response
+    back to the URL the model asked to fetch.
+    """
+    url_map = {}
+    for event in stream_events:
+        if event.get("role") != "assistant":
+            continue
+        for tool_call in event.get("tool_calls") or []:
+            function_spec = tool_call.get("function", {})
+            if function_spec.get("name") not in FETCH_TOOL_NAMES:
+                continue
+            call_id = tool_call.get("id")
+            if not call_id:
+                continue
+            try:
+                arguments = json.loads(function_spec.get("arguments", "") or "")
+            except json.JSONDecodeError:
+                logger.warning("find_fetchurl_tool_call_urls malformed arguments: %r", function_spec.get("arguments", "")[:200])
+                continue
+            url = arguments.get("url")
+            if url:
+                url_map[call_id] = url
+    return url_map
+
+
+def flatten_tool_content(content):
+    """Join list-of-parts tool content into a single string, stripping the <system> meta block."""
+    if isinstance(content, list):
+        text_parts = [part.get("text", "") for part in content if isinstance(part, dict)]
+        content = "\n".join(text_parts)
+    if not isinstance(content, str):
+        return ""
+    return FETCHURL_SYSTEM_META_PATTERN.sub("", content).strip()
+
+
+def fetchurl_source_title(url, content_text):
+    """Pick a reasonable title for a fetched page: first markdown heading if present, else domain."""
+    for line in content_text.splitlines():
+        line = line.strip()
+        if line.startswith("# "):
+            return line.lstrip("#").strip()[:200]
+    return re.sub(r"^https?://(www\.)?", "", url).split("/")[0]
+
+
 def parse_search_result_text(tool_content_text):
     """Parse a SearchWeb result body into a list of {url, title, summary} entries."""
     entries = []
@@ -166,30 +257,41 @@ def parse_search_result_text(tool_content_text):
 
 
 def extract_search_sources(stream_events):
-    """Collect search result sources from tool messages that answered SearchWeb calls."""
+    """Collect grounding sources from tool messages matching SearchWeb and FetchURL calls."""
     search_tool_call_ids = find_search_tool_call_ids(stream_events)
-    logger.info("extract_search_sources: %d search tool_call_ids to match", len(search_tool_call_ids))
+    fetchurl_url_map = find_fetchurl_tool_call_urls(stream_events)
+    logger.info("extract_search_sources: %d SearchWeb ids, %d FetchURL ids", len(search_tool_call_ids), len(fetchurl_url_map))
     sources = []
     tool_messages_total = 0
-    tool_messages_matched = 0
+    search_matched = 0
+    fetch_matched = 0
     for event in stream_events:
         if event.get("role") != "tool":
             continue
         tool_messages_total += 1
-        if event.get("tool_call_id") not in search_tool_call_ids:
-            continue
-        tool_messages_matched += 1
-        content = event.get("content", "")
-        if isinstance(content, list):
-            text_parts = [part.get("text", "") for part in content if isinstance(part, dict)]
-            content = "\n".join(text_parts)
-        if isinstance(content, str) and content:
-            parsed = parse_search_result_text(content)
-            logger.info("extract_search_sources: tool_call_id=%s content=%d chars parsed=%d sources",
-                        event.get("tool_call_id"), len(content), len(parsed))
-            sources.extend(parsed)
-    logger.info("extract_search_sources: tool_messages=%d, search-matched=%d, total_sources=%d",
-                tool_messages_total, tool_messages_matched, len(sources))
+        tool_call_id = event.get("tool_call_id")
+
+        if tool_call_id in search_tool_call_ids:
+            search_matched += 1
+            content = flatten_tool_content(event.get("content", ""))
+            if content:
+                parsed = parse_search_result_text(content)
+                logger.info("extract_search_sources[SearchWeb]: id=%s content=%d chars parsed=%d sources",
+                            tool_call_id, len(content), len(parsed))
+                sources.extend(parsed)
+
+        elif tool_call_id in fetchurl_url_map:
+            fetch_matched += 1
+            fetched_url = fetchurl_url_map[tool_call_id]
+            content = flatten_tool_content(event.get("content", ""))
+            if content:
+                title = fetchurl_source_title(fetched_url, content)
+                logger.info("extract_search_sources[FetchURL]: id=%s url=%s content=%d chars title=%r",
+                            tool_call_id, fetched_url, len(content), title[:80])
+                sources.append({"url": fetched_url, "title": title, "content": content})
+
+    logger.info("extract_search_sources: tool_messages=%d, search_matched=%d, fetch_matched=%d, total_sources=%d",
+                tool_messages_total, search_matched, fetch_matched, len(sources))
     return sources
 
 
