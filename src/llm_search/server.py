@@ -10,9 +10,13 @@ Usage:
 """
 
 import argparse
+import glob
+import json
 import logging
 import os
+import time
 import traceback
+from datetime import datetime, timezone
 
 from flask import Flask, jsonify, request
 
@@ -21,25 +25,82 @@ from llm_search.logging_setup import setup_colorized_logging
 from llm_search.providers import PROVIDER_RUNNERS
 from llm_search.response import build_chat_completion_response
 
+LOGS_DIR = os.path.join(OUTPUT_DIR, "logs")
+
 logger = logging.getLogger(__name__)
 
 
 def parse_model_field(model_string):
     """Split 'provider/model' into (provider, model_name).
 
+    Also accepts bare provider name (e.g. 'codex') and uses its default model.
+
     Returns:
         Tuple of ((provider, model_name), None) on success,
         or (None, error_message) on failure.
     """
-    if not model_string or "/" not in model_string:
+    if not model_string:
         return None, (
-            "model must be in format 'provider/model' "
-            "(e.g. 'claude/haiku', 'codex/gpt-5.4', 'gemini/gemini-3-flash-preview')"
+            "model must be in format 'provider/model' or just 'provider' "
+            "(e.g. 'codex', 'claude/haiku', 'gemini/gemini-3-flash-preview')"
         )
+    if "/" not in model_string:
+        if model_string in PROVIDER_RUNNERS:
+            return (model_string, PROVIDER_DEFAULTS[model_string]["model"]), None
+        return None, f"unknown provider '{model_string}', must be one of: {list(PROVIDER_RUNNERS.keys())}"
     provider, model_name = model_string.split("/", 1)
     if provider not in PROVIDER_RUNNERS:
         return None, f"unknown provider '{provider}', must be one of: {list(PROVIDER_RUNNERS.keys())}"
     return (provider, model_name), None
+
+
+def read_provider_files(provider, output_dir, started_at):
+    """Read intermediate files written by the provider during this request."""
+    prefix_map = {
+        "codex": ["codex_raw_*.jsonl", "codex_trace_*.log", "codex_search_*.json"],
+        "claude": ["claude_raw_*.json", "claude_search_*.json"],
+        "gemini": ["gemini_raw_*.json", "gemini_grounding_*.json", "gemini_activity_*.log"],
+    }
+    file_contents = {}
+    for pattern in prefix_map.get(provider, []):
+        for filepath in glob.glob(os.path.join(output_dir, pattern)):
+            if os.path.getmtime(filepath) >= started_at:
+                try:
+                    with open(filepath) as file_handle:
+                        content = file_handle.read()
+                    try:
+                        file_contents[os.path.basename(filepath)] = json.loads(content)
+                    except json.JSONDecodeError:
+                        file_contents[os.path.basename(filepath)] = content
+                except OSError:
+                    pass
+    return file_contents
+
+
+def write_request_log(provider, model_name, prompt, request_body, response_body, latency_seconds, error, output_dir, started_at):
+    """Write a unified JSON request/response log to LOGS_DIR."""
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    timestamp_str = datetime.fromtimestamp(started_at, tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
+    log_path = os.path.join(LOGS_DIR, f"request_{provider}_{timestamp_str}.json")
+
+    provider_files = read_provider_files(provider, output_dir, started_at)
+
+    log_entry = {
+        "timestamp_utc": datetime.fromtimestamp(started_at, tz=timezone.utc).isoformat(),
+        "provider": provider,
+        "model": model_name,
+        "latency_seconds": round(latency_seconds, 3),
+        "request": request_body,
+        "response": response_body,
+        "error": error,
+        "provider_files": provider_files,
+    }
+
+    with open(log_path, "w") as log_file:
+        json.dump(log_entry, log_file, indent=2)
+
+    logger.info("Request log written to %s (%.1fs)", log_path, latency_seconds)
+    return log_path
 
 
 def extract_prompt_from_messages(messages):
@@ -116,6 +177,10 @@ def create_app():
 
         logger.info("POST /v1/chat/completions model=%s prompt=%s", model_string, prompt[:80])
 
+        started_at = time.time()
+        response_body = None
+        error_message = None
+
         try:
             os.makedirs(OUTPUT_DIR, exist_ok=True)
             openai_output, model_response_text = PROVIDER_RUNNERS[provider](
@@ -124,10 +189,19 @@ def create_app():
             response = build_chat_completion_response(
                 model_string, model_response_text, openai_output
             )
+            response_body = response
             return jsonify(response)
         except Exception as search_error:
+            error_message = str(search_error)
             logger.error("Chat completion failed: %s\n%s", search_error, traceback.format_exc())
             return make_error_response(str(search_error), 500)
+        finally:
+            latency_seconds = time.time() - started_at
+            logger.info("Completed in %.1fs (provider=%s model=%s)", latency_seconds, provider, model_name)
+            write_request_log(
+                provider, model_name, prompt, body, response_body,
+                latency_seconds, error_message, OUTPUT_DIR, started_at,
+            )
 
     @flask_app.route("/health", methods=["GET"])
     def health():

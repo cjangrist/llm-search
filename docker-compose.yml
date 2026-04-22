@@ -1,6 +1,7 @@
 services:
   llm-search:
     build: .
+    restart: unless-stopped
     ports:
       - "8041:8080"
     volumes:
@@ -10,3 +11,4 @@ services:
       - ~/.gemini/oauth_creds.json:/mnt/creds/gemini/oauth_creds.json:ro
       - ~/.gemini/google_accounts.json:/mnt/creds/gemini/google_accounts.json:ro
       - ~/.gemini/settings.json:/mnt/creds/gemini/settings.json:ro
+      - ~/logs/llm-search:/tmp/llm-search/logs

@@ -25,6 +25,10 @@ mkdir -p "$UHOME/.gemini/tmp/bin"
 ln -sf "$(which rg)" "$UHOME/.gemini/tmp/bin/rg"
 chown -R llmsearch:llmsearch "$UHOME/.gemini/tmp"
 
+# Ensure output and logs dirs are writable by llmsearch
+mkdir -p /tmp/llm-search/logs
+chown -R llmsearch:llmsearch /tmp/llm-search
+
 # Create empty sandbox dir for gemini to work from (nothing to scan)
 GEMINI_SANDBOX_DIR="${GEMINI_SANDBOX_DIR:-/tmp/gemini-sandbox}"
 mkdir -p "$GEMINI_SANDBOX_DIR"

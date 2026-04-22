@@ -34,6 +34,7 @@ def call_codex(prompt, model, timeout_seconds, trace_log_path):
     logger.info("Running: codex exec --json -m %s (with RUST_LOG=codex_api=trace) ...", model)
     with open(trace_log_path, "w") as trace_file:
         raw_output = sh.codex(
+            "-c", "service_tier=fast",
             "exec",
             "--json",
             "-m", model,
