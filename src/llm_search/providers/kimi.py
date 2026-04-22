@@ -16,7 +16,7 @@ from datetime import datetime
 
 import sh
 
-from llm_search.config import KIMI_DEFAULT_MODEL, KIMI_DEFAULT_OUTPUT_DIR, KIMI_SANDBOX_DIR
+from llm_search.config import KIMI_DEFAULT_MODEL, KIMI_DEFAULT_OUTPUT_DIR, KIMI_SANDBOX_DIR, PROVIDER_DEFAULTS
 from llm_search.prompts import load_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -467,7 +467,7 @@ def build_argument_parser():
     parser.add_argument("prompt", help="The prompt to send to Kimi")
     parser.add_argument("-m", "--model", default=KIMI_DEFAULT_MODEL)
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose debug logging")
-    parser.add_argument("--timeout", type=int, default=180, help="Timeout in seconds")
+    parser.add_argument("--timeout", type=int, default=PROVIDER_DEFAULTS["kimi"]["timeout"], help="Timeout in seconds")
     parser.add_argument("--raw-dir", default=KIMI_DEFAULT_OUTPUT_DIR, help="Directory for output files")
     return parser
 
