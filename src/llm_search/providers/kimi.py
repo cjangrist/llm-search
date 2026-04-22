@@ -387,15 +387,16 @@ def extract_bare_url_annotations(model_text, search_sources, linked_spans):
 
 
 def build_annotations(model_text, search_sources):
-    """Build url_citation annotations from markdown links and bare URLs in the model response."""
+    """Build url_citation annotations from markdown links, falling back to bare URLs only when markdown pass is empty."""
     markdown_annotations = extract_markdown_link_annotations(model_text, search_sources)
-    linked_spans = {(annotation["start_index"], annotation["end_index"]) for annotation in markdown_annotations}
-    bare_annotations = extract_bare_url_annotations(model_text, search_sources, linked_spans)
-    combined = markdown_annotations + bare_annotations
+    if markdown_annotations:
+        annotations = markdown_annotations
+    else:
+        annotations = extract_bare_url_annotations(model_text, search_sources, set())
 
     seen_keys = set()
     unique_annotations = [
-        annotation for annotation in combined
+        annotation for annotation in annotations
         if (key := (annotation["url"], annotation["start_index"], annotation["end_index"])) not in seen_keys
         and not seen_keys.add(key)
     ]
