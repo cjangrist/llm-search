@@ -60,6 +60,7 @@ def read_provider_files(provider, output_dir, started_at):
         "codex": ["codex_raw_*.jsonl", "codex_trace_*.log", "codex_search_*.json"],
         "claude": ["claude_raw_*.json", "claude_search_*.json"],
         "gemini": ["gemini_raw_*.json", "gemini_grounding_*.json", "gemini_activity_*.log"],
+        "kimi": ["kimi_raw_*.json", "kimi_search_*.json", "kimi_stderr_*.log"],
     }
     file_contents = {}
     for pattern in prefix_map.get(provider, []):

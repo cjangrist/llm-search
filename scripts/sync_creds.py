@@ -24,12 +24,15 @@ CREDENTIAL_PAIRS = [
     ("/mnt/creds/gemini/oauth_creds.json", f"{CONTAINER_HOME}/.gemini/oauth_creds.json"),
     ("/mnt/creds/gemini/google_accounts.json", f"{CONTAINER_HOME}/.gemini/google_accounts.json"),
     ("/mnt/creds/gemini/settings.json", f"{CONTAINER_HOME}/.gemini/settings.json"),
+    ("/mnt/creds/kimi/config.toml", f"{CONTAINER_HOME}/.kimi/config.toml"),
+    ("/mnt/creds/kimi/credentials/kimi-code.json", f"{CONTAINER_HOME}/.kimi/credentials/kimi-code.json"),
 ]
 
 TOKEN_FILES = {
     ".credentials.json",
     "auth.json",
     "oauth_creds.json",
+    "kimi-code.json",
 }
 
 
@@ -83,10 +86,29 @@ def extract_gemini_expiry(filepath):
         return 0
 
 
+def extract_kimi_expiry(filepath):
+    """Extract access_token JWT exp (converted to ms) from Kimi credentials/kimi-code.json."""
+    try:
+        with open(filepath) as credential_file:
+            data = json.load(credential_file)
+        access_token = data.get("access_token", "")
+        if not access_token:
+            return 0
+        jwt_parts = access_token.split(".")
+        if len(jwt_parts) < 2:
+            return 0
+        padded_payload = jwt_parts[1] + "=" * (4 - len(jwt_parts[1]) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded_payload))
+        return payload.get("exp", 0) * 1000
+    except (json.JSONDecodeError, OSError, KeyError, ValueError):
+        return 0
+
+
 EXPIRY_EXTRACTORS = {
     ".credentials.json": extract_claude_expiry,
     "auth.json": extract_codex_expiry,
     "oauth_creds.json": extract_gemini_expiry,
+    "kimi-code.json": extract_kimi_expiry,
 }
 
 

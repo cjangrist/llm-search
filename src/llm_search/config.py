@@ -20,6 +20,7 @@ PROVIDER_DEFAULTS = {
     "claude": {"model": "haiku", "timeout": 180},
     "codex": {"model": "gpt-5.4", "timeout": 180},
     "gemini": {"model": "gemini-3-flash-preview", "timeout": 180},
+    "kimi": {"model": "", "timeout": 300},
 }
 
 # --- Claude ---
@@ -37,3 +38,8 @@ GEMINI_DEFAULT_OUTPUT_DIR = os.getenv("GEMINI_OUTPUT_DIR", "/tmp")
 GEMINI_SANDBOX_DIR = os.getenv("GEMINI_SANDBOX_DIR", "/tmp/gemini-sandbox")
 GEMINI_SCRIPT_PATH = os.getenv("GEMINI_SCRIPT_PATH", "")
 VERTEX_REDIRECT_PREFIX = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/"
+
+# --- Kimi ---
+KIMI_DEFAULT_MODEL = os.getenv("KIMI_MODEL", "")
+KIMI_DEFAULT_OUTPUT_DIR = os.getenv("KIMI_OUTPUT_DIR", "/tmp")
+KIMI_SANDBOX_DIR = os.getenv("KIMI_SANDBOX_DIR", "/tmp/kimi-sandbox")

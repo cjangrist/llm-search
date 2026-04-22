@@ -23,6 +23,17 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install uv (needed because kimi-cli requires Python >=3.12 but base image ships 3.11)
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh
+
+# Install Kimi CLI (MoonshotAI) via uv with its own managed Python,
+# into world-readable paths so the llmsearch user can run it
+ENV UV_TOOL_DIR=/opt/uv-tools
+ENV UV_TOOL_BIN_DIR=/usr/local/bin
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
+RUN uv tool install kimi-cli --python 3.12 \
+    && chmod -R a+rX /opt/uv-tools /opt/uv-python
+
 # Install the llm_search package
 COPY pyproject.toml .
 COPY src/ src/
@@ -44,6 +55,7 @@ ENV LLM_SEARCH_OUTPUT_DIR=/tmp/llm-search
 ENV LLM_SEARCH_PORT=8080
 ENV NODE_COMPILE_CACHE=/tmp/node-compile-cache
 ENV GEMINI_SANDBOX_DIR=/tmp/gemini-sandbox
+ENV KIMI_SANDBOX_DIR=/tmp/kimi-sandbox
 
 EXPOSE 8080
 

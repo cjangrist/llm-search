@@ -8,14 +8,14 @@ UHOME=/home/llmsearch
 smart_sync() {
     python3 /app/scripts/sync_creds.py
     # Fix ownership on any newly synced files
-    chown -R llmsearch:llmsearch "$UHOME/.claude" "$UHOME/.codex" "$UHOME/.gemini" 2>/dev/null
+    chown -R llmsearch:llmsearch "$UHOME/.claude" "$UHOME/.codex" "$UHOME/.gemini" "$UHOME/.kimi" 2>/dev/null
     # Re-apply gemini settings overrides (sync_creds may overwrite settings.json)
     python3 /app/scripts/configure_gemini_settings.py "$UHOME"
     chown llmsearch:llmsearch "$UHOME/.gemini/settings.json" 2>/dev/null
 }
 
 # Pre-create writable dirs
-for cli_dir in "$UHOME/.claude" "$UHOME/.codex" "$UHOME/.gemini"; do
+for cli_dir in "$UHOME/.claude" "$UHOME/.codex" "$UHOME/.gemini" "$UHOME/.kimi" "$UHOME/.kimi/credentials"; do
     mkdir -p "$cli_dir"
     chown llmsearch:llmsearch "$cli_dir"
 done
@@ -35,6 +35,11 @@ mkdir -p "$GEMINI_SANDBOX_DIR"
 echo '*' > "$GEMINI_SANDBOX_DIR/.geminiignore"
 chown -R llmsearch:llmsearch "$GEMINI_SANDBOX_DIR"
 
+# Create empty sandbox dir for kimi to work from
+KIMI_SANDBOX_DIR="${KIMI_SANDBOX_DIR:-/tmp/kimi-sandbox}"
+mkdir -p "$KIMI_SANDBOX_DIR"
+chown -R llmsearch:llmsearch "$KIMI_SANDBOX_DIR"
+
 # Initial sync (includes settings override)
 smart_sync
 
@@ -44,7 +49,8 @@ smart_sync
 # Warm up Node.js module caches in background (don't block startup)
 (gosu llmsearch timeout 15 claude --version >/dev/null 2>&1;
  gosu llmsearch timeout 15 codex --version >/dev/null 2>&1;
- gosu llmsearch timeout 15 gemini --version >/dev/null 2>&1) &
+ gosu llmsearch timeout 15 gemini --version >/dev/null 2>&1;
+ gosu llmsearch timeout 15 kimi --version >/dev/null 2>&1) &
 
 # Drop privileges and run CMD
 exec gosu llmsearch "$@"

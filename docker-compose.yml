@@ -11,4 +11,6 @@ services:
       - ~/.gemini/oauth_creds.json:/mnt/creds/gemini/oauth_creds.json:ro
       - ~/.gemini/google_accounts.json:/mnt/creds/gemini/google_accounts.json:ro
       - ~/.gemini/settings.json:/mnt/creds/gemini/settings.json:ro
+      - ~/.kimi/config.toml:/mnt/creds/kimi/config.toml:ro
+      - ~/.kimi/credentials/kimi-code.json:/mnt/creds/kimi/credentials/kimi-code.json:ro
       - ~/logs/llm-search:/tmp/llm-search/logs
