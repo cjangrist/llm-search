@@ -31,7 +31,8 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/b
 ENV UV_TOOL_DIR=/opt/uv-tools
 ENV UV_TOOL_BIN_DIR=/usr/local/bin
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
-RUN uv tool install kimi-cli --python 3.12 \
+ARG KIMI_CLI_VERSION=1.37.0
+RUN uv tool install "kimi-cli==${KIMI_CLI_VERSION}" --python 3.12 \
     && chmod -R a+rX /opt/uv-tools /opt/uv-python
 
 # Install the llm_search package
