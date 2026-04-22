@@ -236,22 +236,38 @@ def fetchurl_source_title(url, content_text):
     return re.sub(r"^https?://(www\.)?", "", url).split("/")[0]
 
 
+TITLE_ANCHOR_PATTERN = re.compile(r"^Title:[ \t]*([^\n]*?)[ \t]*$", re.MULTILINE)
+URL_FIELD_PATTERN = re.compile(r"^URL:[ \t]*(\S+)[ \t]*$", re.MULTILINE)
+DATE_FIELD_PATTERN = re.compile(r"^Date:[ \t]*([^\n]*?)[ \t]*$", re.MULTILINE)
+SUMMARY_FIELD_PATTERN = re.compile(r"^Summary:[ \t]*(.*)", re.MULTILINE | re.DOTALL)
+
+
 def parse_search_result_text(tool_content_text):
-    """Parse a SearchWeb result body into a list of {url, title, summary} entries."""
+    """Parse a SearchWeb result body into a list of {url, title, date, content} entries.
+
+    Records are bounded by ^Title: anchors rather than \\n---\\n splits so a Summary
+    that contains a markdown horizontal rule doesn't silently drop subsequent entries.
+    """
     entries = []
-    for block in re.split(r"\n---+\n", tool_content_text):
-        block = block.strip()
-        if not block:
-            continue
-        title_match = re.search(r"^Title:\s*(.+?)\s*$", block, re.MULTILINE)
-        url_match = re.search(r"^URL:\s*(\S+)\s*$", block, re.MULTILINE)
-        summary_match = re.search(r"^Summary:\s*(.+)", block, re.MULTILINE | re.DOTALL)
+    title_matches = list(TITLE_ANCHOR_PATTERN.finditer(tool_content_text))
+    for index, title_match in enumerate(title_matches):
+        block_start = title_match.start()
+        block_end = title_matches[index + 1].start() if index + 1 < len(title_matches) else len(tool_content_text)
+        block = tool_content_text[block_start:block_end]
+
+        url_match = URL_FIELD_PATTERN.search(block)
         if not url_match:
             continue
+        date_match = DATE_FIELD_PATTERN.search(block)
+        summary_match = SUMMARY_FIELD_PATTERN.search(block)
+        summary_text = summary_match.group(1).strip() if summary_match else ""
+        summary_text = re.sub(r"\n*---+\s*\Z", "", summary_text).strip()
+
         entries.append({
             "url": url_match.group(1).strip(),
-            "title": title_match.group(1).strip() if title_match else "",
-            "content": summary_match.group(1).strip() if summary_match else "",
+            "title": title_match.group(1).strip(),
+            "date": date_match.group(1).strip() if date_match else "",
+            "content": summary_text,
         })
     return entries
 
