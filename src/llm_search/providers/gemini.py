@@ -10,6 +10,7 @@ import argparse
 import json
 import logging
 import os
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
@@ -84,7 +85,7 @@ def call_gemini(prompt, model, output_dir, timeout_seconds=180):
     logger.debug("call_gemini(model=%s, output_dir=%s, timeout=%ds)", model, output_dir, timeout_seconds)
     activity_log_path = os.path.join(
         output_dir,
-        f"gemini_activity_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl",
+        f"gemini_activity_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.jsonl",
     )
     gemini_environment = {
         **os.environ,
@@ -107,6 +108,7 @@ def call_gemini(prompt, model, output_dir, timeout_seconds=180):
             "-p", augmented_prompt,
             "-o", "stream-json",
             "--yolo",
+            "--skip-trust",
             _env=gemini_environment,
             _cwd=sandbox_dir,
             _ok_code=[0, 1],
@@ -120,6 +122,7 @@ def call_gemini(prompt, model, output_dir, timeout_seconds=180):
             "-p", augmented_prompt,
             "-o", "stream-json",
             "--yolo",
+            "--skip-trust",
             _env=gemini_environment,
             _cwd=sandbox_dir,
             _ok_code=[0, 1],
@@ -322,7 +325,7 @@ def run_search(prompt, model, output_dir, timeout):
         Tuple of (openai_output_list, model_response_text).
     """
     logger.debug("run_search(model=%s, timeout=%d)", model, timeout)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     raw_json_path = os.path.join(output_dir, f"gemini_raw_{timestamp}.json")
     grounding_json_path = os.path.join(output_dir, f"gemini_grounding_{timestamp}.json")
 
@@ -361,7 +364,7 @@ def main():
     args = parser.parse_args()
     setup_colorized_logging(verbose=args.verbose)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     raw_json_path = os.path.join(args.raw_dir, f"gemini_raw_{timestamp}.json")
     grounding_json_path = os.path.join(args.raw_dir, f"gemini_grounding_{timestamp}.json")
 

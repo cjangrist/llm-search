@@ -16,6 +16,7 @@ import logging
 import os
 import time
 import traceback
+import uuid
 from datetime import datetime, timezone
 
 from flask import Flask, jsonify, request
@@ -82,7 +83,7 @@ def write_request_log(provider, model_name, prompt, request_body, response_body,
     """Write a unified JSON request/response log to LOGS_DIR."""
     os.makedirs(LOGS_DIR, exist_ok=True)
     timestamp_str = datetime.fromtimestamp(started_at, tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
-    log_path = os.path.join(LOGS_DIR, f"request_{provider}_{timestamp_str}.json")
+    log_path = os.path.join(LOGS_DIR, f"request_{provider}_{timestamp_str}_{uuid.uuid4().hex[:8]}.json")
 
     provider_files = read_provider_files(provider, output_dir, started_at)
 

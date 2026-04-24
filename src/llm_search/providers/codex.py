@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import uuid
 from datetime import datetime
 
 import sh
@@ -256,7 +257,7 @@ def run_search(prompt, model, output_dir, timeout):
         Tuple of (openai_output_list, model_response_text).
     """
     logger.debug("run_search(model=%s, timeout=%d)", model, timeout)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     raw_jsonl_path = os.path.join(output_dir, f"codex_raw_{timestamp}.jsonl")
     trace_log_path = os.path.join(output_dir, f"codex_trace_{timestamp}.log")
     search_json_path = os.path.join(output_dir, f"codex_search_{timestamp}.json")
@@ -307,7 +308,7 @@ def main():
     args = parser.parse_args()
     setup_colorized_logging(verbose=args.verbose)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     raw_jsonl_path = os.path.join(args.raw_dir, f"codex_raw_{timestamp}.jsonl")
     trace_log_path = os.path.join(args.raw_dir, f"codex_trace_{timestamp}.log")
     search_json_path = os.path.join(args.raw_dir, f"codex_search_{timestamp}.json")

@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import uuid
 from datetime import datetime
 
 import sh
@@ -450,7 +451,7 @@ def run_search(prompt, model, output_dir, timeout):
         Tuple of (openai_output_list, model_response_text).
     """
     logger.info("run_search(model=%s, timeout=%d, output_dir=%s)", model or "(config default)", timeout, output_dir)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     raw_jsonl_path = os.path.join(output_dir, f"kimi_raw_{timestamp}.json")
     search_json_path = os.path.join(output_dir, f"kimi_search_{timestamp}.json")
     stderr_log_path = os.path.join(output_dir, f"kimi_stderr_{timestamp}.log")
@@ -497,7 +498,7 @@ def main():
     args = parser.parse_args()
     setup_colorized_logging(verbose=args.verbose)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     raw_jsonl_path = os.path.join(args.raw_dir, f"kimi_raw_{timestamp}.json")
     search_json_path = os.path.join(args.raw_dir, f"kimi_search_{timestamp}.json")
 
