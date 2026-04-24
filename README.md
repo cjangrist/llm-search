@@ -56,7 +56,7 @@ These credentials are automatically mounted into the Docker container and synced
 | `LLM_SEARCH_PORT` | `8080` | API listen port (inside container) |
 | `LLM_SEARCH_HOST` | `0.0.0.0` | API bind address |
 | `CLAUDE_MODEL` | `haiku` | Default Claude model |
-| `CODEX_MODEL` | `gpt-5.4` | Default Codex model |
+| `CODEX_MODEL` | `gpt-5.5` | Default Codex model |
 | `GEMINI_MODEL` | `gemini-3-flash-preview` | Default Gemini model |
 
 ### Docker Compose Port Mapping
@@ -95,7 +95,7 @@ curl -X POST http://localhost:8041/v1/chat/completions \
 | Provider | Example Model | Description |
 |----------|--------------|-------------|
 | `claude` | `claude/haiku` | Claude Code with WebSearch tool |
-| `codex` | `codex/gpt-5.4` | OpenAI Codex with web search |
+| `codex` | `codex/gpt-5.5` | OpenAI Codex with web search |
 | `gemini` | `gemini/search-fast` | Gemini CLI with Google Web Search |
 
 **Response with citations:**
@@ -146,7 +146,7 @@ curl http://localhost:8041/health
 curl http://localhost:8041/providers
 # {
 #   "claude": {"default_model": "haiku", "default_timeout": 180},
-#   "codex": {"default_model": "gpt-5.4", "default_timeout": 180},
+#   "codex": {"default_model": "gpt-5.5", "default_timeout": 180},
 #   "gemini": {"default_model": "gemini-3-flash-preview", "default_timeout": 180}
 # }
 ```
@@ -160,7 +160,7 @@ Each provider can be run independently for testing:
 python -m llm_search.providers.claude "What is quantum computing?" -m haiku -v
 
 # Codex
-python -m llm_search.providers.codex "Latest AI news" -m gpt-5.4 -v
+python -m llm_search.providers.codex "Latest AI news" -m gpt-5.5 -v
 
 # Gemini
 python -m llm_search.providers.gemini "Bitcoin price today" -m search-fast -v
@@ -337,7 +337,7 @@ PROVIDER_RUNNERS = {
 ```python
 PROVIDER_DEFAULTS = {
     "claude": {"model": "haiku", "timeout": 180},
-    "codex": {"model": "gpt-5.4", "timeout": 180},
+    "codex": {"model": "gpt-5.5", "timeout": 180},
     "gemini": {"model": "gemini-3-flash-preview", "timeout": 180},
     "newprovider": {"model": "default-model", "timeout": 180},
 }

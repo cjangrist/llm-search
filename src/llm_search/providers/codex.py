@@ -66,10 +66,15 @@ def parse_jsonl_events(raw_text):
 
 
 def parse_trace_log_sse_events(trace_log_path):
-    """Parse raw SSE websocket events from the RUST_LOG=trace stderr output."""
+    """Parse raw SSE websocket events from the RUST_LOG=trace stderr output.
+
+    Opened with errors='replace' because codex 0.124.0+ writes ANSI escape
+    sequences that include stray non-UTF-8 bytes; strict decoding would abort
+    the whole parse on the first bad byte.
+    """
     sse_events = []
     websocket_event_pattern = re.compile(r'websocket event: ({.*})\s*$')
-    with open(trace_log_path) as trace_file:
+    with open(trace_log_path, encoding="utf-8", errors="replace") as trace_file:
         for line in trace_file:
             match = websocket_event_pattern.search(line)
             if not match:
@@ -243,7 +248,7 @@ def run_search(prompt, model, output_dir, timeout):
 
     Args:
         prompt: The user's search query.
-        model: Codex model name (e.g. "gpt-5.4").
+        model: Codex model name (e.g. "gpt-5.5").
         output_dir: Directory to save intermediate files.
         timeout: CLI timeout in seconds.
 

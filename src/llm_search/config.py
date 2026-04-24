@@ -18,7 +18,7 @@ HOST = os.getenv("LLM_SEARCH_HOST", "0.0.0.0")
 # --- Provider defaults ---
 PROVIDER_DEFAULTS = {
     "claude": {"model": "haiku", "timeout": 180},
-    "codex": {"model": "gpt-5.4", "timeout": 180},
+    "codex": {"model": "gpt-5.5", "timeout": 180},
     "gemini": {"model": "gemini-3-flash-preview", "timeout": 180},
     "kimi": {"model": "", "timeout": 300},
 }
@@ -29,7 +29,7 @@ CLAUDE_DEFAULT_OUTPUT_DIR = os.getenv("CLAUDE_OUTPUT_DIR", "/tmp")
 CLAUDE_ALLOWED_TOOLS = ["WebSearch"]
 
 # --- Codex ---
-CODEX_DEFAULT_MODEL = os.getenv("CODEX_MODEL", "gpt-5.4")
+CODEX_DEFAULT_MODEL = os.getenv("CODEX_MODEL", "gpt-5.5")
 CODEX_DEFAULT_OUTPUT_DIR = os.getenv("CODEX_OUTPUT_DIR", "/tmp")
 
 # --- Gemini ---

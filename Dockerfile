@@ -8,10 +8,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Bun for faster gemini CLI runtime (~2x node startup speedup)
 RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash
 
-# Install CLIs globally via npm
-RUN npm install -g @anthropic-ai/claude-code@latest \
-    @openai/codex@latest \
-    @google/gemini-cli@preview
+# Install CLIs globally via npm (pinned to match host versions as of 2026-04-24)
+ARG CLAUDE_CODE_VERSION=2.1.119
+ARG CODEX_VERSION=0.124.0
+ARG GEMINI_CLI_VERSION=0.39.1
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    "@openai/codex@${CODEX_VERSION}" \
+    "@google/gemini-cli@${GEMINI_CLI_VERSION}"
 
 # Python venv so pip doesn't complain about externally-managed
 RUN python3 -m venv /opt/venv
@@ -31,7 +34,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/b
 ENV UV_TOOL_DIR=/opt/uv-tools
 ENV UV_TOOL_BIN_DIR=/usr/local/bin
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
-ARG KIMI_CLI_VERSION=1.37.0
+ARG KIMI_CLI_VERSION=1.39.0
 RUN uv tool install "kimi-cli==${KIMI_CLI_VERSION}" --python 3.12 \
     && chmod -R a+rX /opt/uv-tools /opt/uv-python
 
