@@ -50,25 +50,10 @@ api_key = "{api_key}"
 '''
 
 
-def call_kimi(prompt, model, timeout_seconds, stderr_log_path=None):
-    """Call Kimi CLI in print mode via sh with stream-json output and captured stderr."""
-    logger.info("call_kimi(model=%s, timeout=%ds, stderr_log=%s)", model or "(config default)", timeout_seconds, stderr_log_path)
-
-    system_prompt = load_system_prompt()
-    augmented_prompt = (
-        f"{system_prompt}\n\n---\n\n"
-        f'CRITICAL RULE-> using web_search answer: "{prompt}"'
-    )
-    logger.info("call_kimi: system_prompt=%d chars, user_prompt=%d chars, augmented=%d chars",
-                len(system_prompt), len(prompt), len(augmented_prompt))
-
-    sandbox_dir = KIMI_SANDBOX_DIR
-    os.makedirs(sandbox_dir, exist_ok=True)
-
+def build_kimi_arguments(model, augmented_prompt, sandbox_dir):
+    """Assemble the kimi CLI argv, including the api-key config override when KIMI_API_KEY is set."""
     kimi_arguments = [
-        "--print",
-        "--no-thinking",
-        "--verbose",
+        "--print", "--no-thinking", "--verbose",
         "--output-format", "stream-json",
         "-w", sandbox_dir,
         "-p", augmented_prompt,
@@ -83,36 +68,57 @@ def call_kimi(prompt, model, timeout_seconds, stderr_log_path=None):
         kimi_arguments = ["--config", config_override, *kimi_arguments]
     else:
         logger.info("call_kimi: no KIMI_API_KEY env set, falling back to OAuth config")
+    return kimi_arguments
 
-    redacted_args = []
+
+REDACT_VALUE_FLAGS = {"-p", "--prompt", "-c", "--command", "--config"}
+
+
+def redact_argv_for_logging(kimi_arguments):
+    """Replace values of -p / -c / --config with `<redacted>` for safe logging (api keys + prompts)."""
+    redacted = []
     skip_next = False
     for argument in kimi_arguments:
         if skip_next:
-            redacted_args.append("<redacted>")
+            redacted.append("<redacted>")
             skip_next = False
             continue
-        redacted_args.append(argument)
-        if argument in {"-p", "--prompt", "-c", "--command", "--config"}:
+        redacted.append(argument)
+        if argument in REDACT_VALUE_FLAGS:
             skip_next = True
-    logger.info("Running: kimi %s (prompt=%d chars)", " ".join(redacted_args), len(augmented_prompt))
+    return redacted
+
+
+def call_kimi(prompt, model, timeout_seconds, stderr_log_path=None):
+    """Call Kimi CLI in print mode via sh with stream-json output and captured stderr."""
+    logger.info("call_kimi(model=%s, timeout=%ds, stderr_log=%s)", model or "(config default)", timeout_seconds, stderr_log_path)
+    system_prompt = load_system_prompt()
+    augmented_prompt = (
+        f"{system_prompt}\n\n---\n\n"
+        f'CRITICAL RULE-> using web_search answer: "{prompt}"'
+    )
+    logger.info("call_kimi: system_prompt=%d chars, user_prompt=%d chars, augmented=%d chars",
+                len(system_prompt), len(prompt), len(augmented_prompt))
+
+    sandbox_dir = KIMI_SANDBOX_DIR
+    os.makedirs(sandbox_dir, exist_ok=True)
+    kimi_arguments = build_kimi_arguments(model, augmented_prompt, sandbox_dir)
+    logger.info("Running: kimi %s (prompt=%d chars)", " ".join(redact_argv_for_logging(kimi_arguments)), len(augmented_prompt))
 
     stderr_file = open(stderr_log_path, "w") if stderr_log_path else None
     try:
         raw_output = sh.kimi(
             *kimi_arguments,
-            _env={**os.environ},
-            _ok_code=[0, 1],
-            _encoding="utf-8",
-            _err=stderr_file,
-            _timeout=timeout_seconds,
+            _env={**os.environ}, _ok_code=[0, 1], _encoding="utf-8",
+            _err=stderr_file, _timeout=timeout_seconds,
         )
     finally:
         if stderr_file is not None:
             stderr_file.close()
 
     raw_text = str(raw_output)
-    logger.info("call_kimi: stdout=%d chars%s", len(raw_text),
-                (f", stderr_log=%s (%d bytes)" % (stderr_log_path, os.path.getsize(stderr_log_path))) if stderr_log_path and os.path.isfile(stderr_log_path) else "")
+    stderr_size = os.path.getsize(stderr_log_path) if stderr_log_path and os.path.isfile(stderr_log_path) else 0
+    logger.info("call_kimi: stdout=%d chars stderr_log=%s stderr_bytes=%d", len(raw_text), stderr_log_path, stderr_size)
     return raw_text
 
 
