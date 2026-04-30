@@ -212,6 +212,22 @@ def extract_search_sources(stream_events):
     return sources
 
 
+def detect_provider_failure(stream_events, model_response):
+    """Return an error message if the Kimi run failed, else None.
+
+    Kimi-cli emits role=="error" or type=="error" events on auth/rate-limit/CLI-crash.
+    A clean crash also produces an empty model_response — also a failure.
+    """
+    for event in stream_events:
+        if event.get("role") == "error":
+            return event.get("content") or "<kimi role=error event with no content>"
+        if (event.get("type") or "").lower() in {"error", "turn.failed"}:
+            return event.get("message") or "<kimi error event with no message>"
+    if not model_response:
+        return "kimi returned empty model response (auth/rate-limit/CLI-crash likely)"
+    return None
+
+
 def extract_model_response(stream_events):
     """Return the last assistant text content block (ignoring think/thought blocks)."""
     final_text_parts = []

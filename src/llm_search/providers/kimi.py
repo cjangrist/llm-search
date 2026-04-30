@@ -19,6 +19,7 @@ from llm_search.config import KIMI_DEFAULT_MODEL, KIMI_DEFAULT_OUTPUT_DIR, KIMI_
 from llm_search.prompts import load_system_prompt
 from llm_search.providers.kimi_parsing import (
     build_openai_format,
+    detect_provider_failure,
     extract_model_response,
     extract_search_queries,
     extract_search_sources,
@@ -198,6 +199,12 @@ def run_search(prompt, model, output_dir, timeout, request_id=None, environment=
     search_queries = extract_search_queries(stream_events)
     search_sources = extract_search_sources(stream_events)
     model_response = extract_model_response(stream_events)
+
+    failure_message = detect_provider_failure(stream_events, model_response)
+    if failure_message:
+        logger.error("Kimi run failed: %s", failure_message[:240])
+        raise RuntimeError(f"kimi provider failed: {failure_message}")
+
     openai_output = build_openai_format(search_queries, search_sources, model_response)
 
     annotation_count = sum(

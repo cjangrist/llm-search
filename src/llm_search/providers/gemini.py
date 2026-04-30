@@ -309,6 +309,25 @@ def extract_model_response(grounding_blocks, stream_events):
     )
 
 
+def detect_provider_failure(stream_events, grounding_blocks, model_response):
+    """Return an error message if the Gemini run failed, else None.
+
+    Gemini-cli emits stream events with type=="error" or "turn.failed" when the
+    upstream API rejects the call (auth, rate limit, model-not-found). On a clean
+    crash the stream simply ends with no grounding and no model_response — also a
+    failure we should surface as HTTP 500 instead of an HTTP 200 with empty content.
+    """
+    for event in stream_events:
+        event_type = (event.get("type") or "").lower()
+        if event_type in {"error", "turn.failed"}:
+            return event.get("message") or event.get("error", {}).get("message") or "<gemini error event with no message>"
+        if event.get("is_error"):
+            return event.get("error") or event.get("content") or "<gemini event flagged is_error=true>"
+    if not model_response and not grounding_blocks:
+        return "gemini returned empty response with no grounding (auth/rate-limit/CLI-crash likely)"
+    return None
+
+
 def run_search(prompt, model, output_dir, timeout, request_id=None, environment=None, sandbox_dir=None, script_path=None):
     """Run Gemini web search and return OpenAI-format result.
 
@@ -343,12 +362,17 @@ def run_search(prompt, model, output_dir, timeout, request_id=None, environment=
         json.dump(stream_events, output_file, indent=2)
 
     search_queries, grounding_blocks = parse_activity_log(activity_log_path)
-    openai_output = build_openai_format(search_queries, grounding_blocks, True)
+    model_response = extract_model_response(grounding_blocks, stream_events)
 
+    failure_message = detect_provider_failure(stream_events, grounding_blocks, model_response)
+    if failure_message:
+        logger.error("Gemini run failed: %s", failure_message[:240])
+        raise RuntimeError(f"gemini provider failed: {failure_message}")
+
+    openai_output = build_openai_format(search_queries, grounding_blocks, True)
     with open(grounding_json_path, "w") as output_file:
         json.dump(openai_output, output_file, indent=2)
 
-    model_response = extract_model_response(grounding_blocks, stream_events)
     logger.debug("run_search returning %d chars response", len(model_response))
     return openai_output, model_response
 
