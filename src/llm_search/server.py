@@ -198,9 +198,13 @@ def handle_providers():
     })
 
 
+MAX_REQUEST_BYTES = 256 * 1024
+
+
 def create_app():
     """Create and configure the Flask application by binding module-level handlers."""
     flask_app = Flask(__name__)
+    flask_app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_BYTES
     flask_app.add_url_rule("/v1/chat/completions", view_func=handle_chat_completions, methods=["POST"])
     flask_app.add_url_rule("/health", view_func=handle_health, methods=["GET"])
     flask_app.add_url_rule("/providers", view_func=handle_providers, methods=["GET"])

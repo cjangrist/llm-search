@@ -3,7 +3,10 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "8041:8080"
+      # Bind to localhost only — anyone reachable on 0.0.0.0 could drain provider quotas
+      # and (with the codex CLI sandbox bypass) exfiltrate credentials. Same-host clients
+      # still reach localhost:8041; cross-host access requires an explicit reverse proxy.
+      - "127.0.0.1:8041:8080"
     environment:
       - KIMI_API_KEY
     volumes:
