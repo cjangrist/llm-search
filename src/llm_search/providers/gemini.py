@@ -267,9 +267,26 @@ def build_openai_format(search_queries, grounding_blocks, should_resolve):
             },
         })
 
-    for block in grounding_blocks:
-        model_text = block["text"] or ""
-        annotations = build_annotations(model_text, block["metadata"], uri_resolution_map)
+    if grounding_blocks:
+        # Emit a single message item carrying the concatenated text. Each block's
+        # annotations have offsets relative to that block's own text — shift them
+        # by the running prefix length when joining so they point at the right
+        # span in the joined output. Without this shift annotations from blocks 1+
+        # point at offsets that don't exist in the final text.
+        joined_parts = []
+        joined_annotations = []
+        running_prefix_len = 0
+        block_separator = "\n"
+        for block_index, block in enumerate(grounding_blocks):
+            block_text = block["text"] or ""
+            block_annotations = build_annotations(block_text, block["metadata"], uri_resolution_map)
+            for annotation in block_annotations:
+                shifted = dict(annotation)
+                shifted["start_index"] = annotation.get("start_index", 0) + running_prefix_len
+                shifted["end_index"] = annotation.get("end_index", 0) + running_prefix_len
+                joined_annotations.append(shifted)
+            joined_parts.append(block_text)
+            running_prefix_len += len(block_text) + (len(block_separator) if block_index < len(grounding_blocks) - 1 else 0)
         output.append({
             "type": "message",
             "status": "completed",
@@ -277,8 +294,8 @@ def build_openai_format(search_queries, grounding_blocks, should_resolve):
             "content": [
                 {
                     "type": "output_text",
-                    "text": model_text,
-                    "annotations": annotations,
+                    "text": block_separator.join(joined_parts),
+                    "annotations": joined_annotations,
                 }
             ],
         })
@@ -298,14 +315,18 @@ def parse_stream_events(raw_text):
 
 
 def extract_model_response(grounding_blocks, stream_events):
-    """Get model response text from grounding blocks or stream events."""
-    return next(
-        (block["text"] for block in grounding_blocks if block["text"]),
-        "".join(
-            event.get("content", "")
-            for event in stream_events
-            if event.get("type") == "message" and event.get("role") == "assistant"
-        ),
+    """Get model response text from grounding blocks or stream events.
+
+    Joins ALL non-empty grounding-block texts (matching build_openai_format's join order)
+    so the returned string aligns with the annotation offsets emitted to the client.
+    """
+    block_texts = [block["text"] for block in grounding_blocks if block.get("text")]
+    if block_texts:
+        return "\n".join(block_texts)
+    return " ".join(
+        event.get("content", "")
+        for event in stream_events
+        if event.get("type") == "message" and event.get("role") == "assistant"
     )
 
 
