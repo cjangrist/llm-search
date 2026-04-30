@@ -42,7 +42,7 @@ def call_codex(prompt, model, timeout_seconds, trace_log_path, environment):
             "-m", model,
             "--config", "model_reasoning_effort=medium",
             "--config", f"instructions={system_prompt}",
-            "--dangerously-bypass-approvals-and-sandbox",
+            "--sandbox", "read-only",
             "--skip-git-repo-check",
             "--ephemeral",
             augmented_prompt,
