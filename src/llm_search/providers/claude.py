@@ -22,17 +22,21 @@ from llm_search.prompts import load_system_prompt
 logger = logging.getLogger(__name__)
 
 
-def call_claude(prompt, model, output_dir, timeout_seconds):
+def build_claude_environment(parent_environment):
+    """Strip CLAUDE_*/CLAUDECODE_* vars from a parent env mapping; force NODE_NO_WARNINGS=1."""
+    clean = {
+        key: value for key, value in parent_environment.items()
+        if not key.startswith("CLAUDECODE") and not key.startswith("CLAUDE_CODE_")
+    }
+    clean["NODE_NO_WARNINGS"] = "1"
+    return clean
+
+
+def call_claude(prompt, model, output_dir, timeout_seconds, environment):
     """Call Claude Code CLI in print mode via sh, return raw stream-json text."""
     logger.debug("call_claude(model=%s, output_dir=%s, timeout=%ds)", model, output_dir, timeout_seconds)
 
-    clean_environment = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith("CLAUDECODE") and not key.startswith("CLAUDE_CODE_")
-    }
-    clean_environment["NODE_NO_WARNINGS"] = "1"
-
+    clean_environment = build_claude_environment(environment)
     system_prompt = load_system_prompt()
     augmented_prompt = f'CRITICAL RULE-> using web_search answer: "{prompt}"'
 
@@ -280,7 +284,7 @@ def build_openai_format(search_queries, search_sources, model_text):
     return output
 
 
-def run_search(prompt, model, output_dir, timeout):
+def run_search(prompt, model, output_dir, timeout, environment=None):
     """Run Claude Code web search and return OpenAI-format result.
 
     Args:
@@ -288,6 +292,8 @@ def run_search(prompt, model, output_dir, timeout):
         model: Claude model name (e.g. "haiku").
         output_dir: Directory to save intermediate JSON files.
         timeout: CLI timeout in seconds.
+        environment: Process environment dict to inherit (defaults to os.environ).
+            Strips CLAUDECODE_*/CLAUDE_CODE_* keys and sets NODE_NO_WARNINGS=1.
 
     Returns:
         Tuple of (openai_output_list, model_response_text).
@@ -297,7 +303,7 @@ def run_search(prompt, model, output_dir, timeout):
     raw_json_path = os.path.join(output_dir, f"claude_raw_{timestamp}.json")
     search_json_path = os.path.join(output_dir, f"claude_search_{timestamp}.json")
 
-    raw_text = call_claude(prompt, model, output_dir, timeout)
+    raw_text = call_claude(prompt, model, output_dir, timeout, environment if environment is not None else os.environ)
     stream_events = parse_stream_events(raw_text)
     with open(raw_json_path, "w") as output_file:
         json.dump(stream_events, output_file, indent=2)
@@ -343,7 +349,7 @@ def main():
     search_json_path = os.path.join(args.raw_dir, f"claude_search_{timestamp}.json")
 
     logger.info("Calling Claude Code model=%s", args.model)
-    raw_text = call_claude(args.prompt, args.model, args.raw_dir, args.timeout)
+    raw_text = call_claude(args.prompt, args.model, args.raw_dir, args.timeout, os.environ)
 
     stream_events = parse_stream_events(raw_text)
     with open(raw_json_path, "w") as output_file:
