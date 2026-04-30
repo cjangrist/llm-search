@@ -80,8 +80,32 @@ def find_gemini_script():
     return gemini_bin
 
 
+GEMINI_CLI_FLAGS = ("-o", "stream-json", "--yolo", "--skip-trust")
+
+
+def invoke_gemini_via_bun(model, augmented_prompt, gemini_environment, sandbox_dir, timeout_seconds):
+    """Run gemini-cli under bun (faster cold-start than node)."""
+    gemini_script = find_gemini_script()
+    logger.debug("Running gemini via bun: %s", gemini_script)
+    return sh.bun(
+        gemini_script, "-m", model, "-p", augmented_prompt, *GEMINI_CLI_FLAGS,
+        _env=gemini_environment, _cwd=sandbox_dir,
+        _ok_code=[0, 1], _encoding="utf-8", _timeout=timeout_seconds,
+    )
+
+
+def invoke_gemini_via_node(model, augmented_prompt, gemini_environment, sandbox_dir, timeout_seconds):
+    """Run gemini-cli under node (fallback when bun isn't on PATH)."""
+    logger.debug("bun not found, falling back to node runtime")
+    return sh.gemini(
+        "-m", model, "-p", augmented_prompt, *GEMINI_CLI_FLAGS,
+        _env=gemini_environment, _cwd=sandbox_dir,
+        _ok_code=[0, 1], _encoding="utf-8", _timeout=timeout_seconds,
+    )
+
+
 def call_gemini(prompt, model, output_dir, timeout_seconds=180):
-    """Call Gemini CLI via bun for faster startup, return raw text and activity log path."""
+    """Call Gemini CLI (via bun if available, else node), return raw text and activity log path."""
     logger.debug("call_gemini(model=%s, output_dir=%s, timeout=%ds)", model, output_dir, timeout_seconds)
     activity_log_path = os.path.join(
         output_dir,
@@ -92,43 +116,13 @@ def call_gemini(prompt, model, output_dir, timeout_seconds=180):
         "GEMINI_CLI_ACTIVITY_LOG_TARGET": activity_log_path,
         "GEMINI_SYSTEM_MD": SYSTEM_PROMPT_FILE_PATH,
     }
-
     augmented_prompt = f'CRITICAL RULE-> using web_search answer: "{prompt}"'
 
     sandbox_dir = GEMINI_SANDBOX_DIR
     os.makedirs(sandbox_dir, exist_ok=True)
 
-    use_bun = bool(sh.which("bun"))
-    if use_bun:
-        gemini_script = find_gemini_script()
-        logger.debug("Running gemini via bun: %s", gemini_script)
-        raw_output = sh.bun(
-            gemini_script,
-            "-m", model,
-            "-p", augmented_prompt,
-            "-o", "stream-json",
-            "--yolo",
-            "--skip-trust",
-            _env=gemini_environment,
-            _cwd=sandbox_dir,
-            _ok_code=[0, 1],
-            _encoding="utf-8",
-            _timeout=timeout_seconds,
-        )
-    else:
-        logger.debug("bun not found, falling back to node runtime")
-        raw_output = sh.gemini(
-            "-m", model,
-            "-p", augmented_prompt,
-            "-o", "stream-json",
-            "--yolo",
-            "--skip-trust",
-            _env=gemini_environment,
-            _cwd=sandbox_dir,
-            _ok_code=[0, 1],
-            _encoding="utf-8",
-            _timeout=timeout_seconds,
-        )
+    runner = invoke_gemini_via_bun if sh.which("bun") else invoke_gemini_via_node
+    raw_output = runner(model, augmented_prompt, gemini_environment, sandbox_dir, timeout_seconds)
 
     raw_text = str(raw_output)
     logger.debug("call_gemini returned %d chars, activity_log=%s", len(raw_text), activity_log_path)
