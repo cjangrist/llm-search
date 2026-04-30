@@ -24,11 +24,11 @@ from llm_search.prompts import load_system_prompt
 logger = logging.getLogger(__name__)
 
 
-def call_codex(prompt, model, timeout_seconds, trace_log_path):
+def call_codex(prompt, model, timeout_seconds, trace_log_path, environment):
     """Call Codex CLI in exec mode via sh with JSONL output and RUST_LOG=trace for raw SSE capture."""
     logger.debug("call_codex(model=%s, timeout=%ds, trace_log=%s)", model, timeout_seconds, trace_log_path)
 
-    trace_environment = {**os.environ, "RUST_LOG": "codex_api=trace"}
+    trace_environment = {**environment, "RUST_LOG": "codex_api=trace"}
     system_prompt = load_system_prompt()
 
     augmented_prompt = f'CRITICAL RULE-> using web_search answer: "{prompt}"'
@@ -287,7 +287,7 @@ def parse_codex_outputs(events, trace_log_path):
     return search_queries, native_annotations, extract_model_response(events)
 
 
-def run_search(prompt, model, output_dir, timeout):
+def run_search(prompt, model, output_dir, timeout, environment=None):
     """Run Codex web search and return OpenAI-format result.
 
     Args:
@@ -295,6 +295,8 @@ def run_search(prompt, model, output_dir, timeout):
         model: Codex model name (e.g. "gpt-5.5").
         output_dir: Directory to save intermediate files.
         timeout: CLI timeout in seconds.
+        environment: Process environment dict to inherit (defaults to os.environ).
+            RUST_LOG=codex_api=trace is overlaid on top to capture SSE events.
 
     Returns:
         Tuple of (openai_output_list, model_response_text).
@@ -305,7 +307,7 @@ def run_search(prompt, model, output_dir, timeout):
     trace_log_path = os.path.join(output_dir, f"codex_trace_{timestamp}.log")
     search_json_path = os.path.join(output_dir, f"codex_search_{timestamp}.json")
 
-    raw_text = call_codex(prompt, model, timeout, trace_log_path)
+    raw_text = call_codex(prompt, model, timeout, trace_log_path, environment if environment is not None else os.environ)
     events = parse_jsonl_events(raw_text)
     with open(raw_jsonl_path, "w") as output_file:
         json.dump(events, output_file, indent=2)
@@ -349,7 +351,7 @@ def main():
     search_json_path = os.path.join(args.raw_dir, f"codex_search_{timestamp}.json")
 
     logger.info("Calling Codex model=%s", args.model)
-    raw_text = call_codex(args.prompt, args.model, args.timeout, trace_log_path)
+    raw_text = call_codex(args.prompt, args.model, args.timeout, trace_log_path, os.environ)
 
     events = parse_jsonl_events(raw_text)
     with open(raw_jsonl_path, "w") as output_file:
