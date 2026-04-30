@@ -6,6 +6,7 @@ the host settings.json being copied in by sync_creds.py.
 import json
 import os
 import sys
+import tempfile
 
 SETTINGS_PATH = os.path.join(sys.argv[1], ".gemini", "settings.json") if len(sys.argv) > 1 else os.path.expanduser("~/.gemini/settings.json")
 
@@ -49,8 +50,18 @@ def apply_settings(settings_path):
     settings.setdefault("modelConfigs", {})
     settings["modelConfigs"]["customAliases"] = CUSTOM_ALIASES
 
-    with open(settings_path, "w") as f:
-        json.dump(settings, f, indent=2)
+    settings_dir = os.path.dirname(settings_path)
+    os.makedirs(settings_dir, exist_ok=True)
+    tmp_fd, tmp_path = tempfile.mkstemp(prefix=".settings_", suffix=".json", dir=settings_dir)
+    try:
+        with os.fdopen(tmp_fd, "w") as tmp_file:
+            json.dump(settings, tmp_file, indent=2)
+        os.replace(tmp_path, settings_path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            try: os.replace(tmp_path, tmp_path + ".aborted")
+            except OSError: pass
+        raise
 
 
 if __name__ == "__main__":

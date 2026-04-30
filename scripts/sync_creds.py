@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import time
 
 
@@ -137,15 +138,44 @@ def host_token_is_fresher(host_path, container_path):
         return False
 
 
+def atomic_copy(host_path, container_path, mode=0o600):
+    """Copy host_path -> container_path via tempfile + os.replace (POSIX-atomic same-FS).
+
+    Avoids the read-mid-write window of shutil.copy2 (which truncates the destination,
+    then writes byte-by-byte). Mode is fchmod'd before the rename so there is no umask
+    window where the file is briefly world/group readable.
+    """
+    container_dir = os.path.dirname(container_path)
+    os.makedirs(container_dir, exist_ok=True)
+    tmp_fd, tmp_path = tempfile.mkstemp(prefix=".sync_", suffix=os.path.basename(container_path), dir=container_dir)
+    try:
+        os.fchmod(tmp_fd, mode)
+        with open(host_path, "rb") as src, os.fdopen(tmp_fd, "wb") as dst:
+            tmp_fd = -1  # ownership transferred to dst's contextmanager
+            shutil.copyfileobj(src, dst)
+        try:
+            shutil.copystat(host_path, container_path) if os.path.exists(container_path) else None
+        except OSError:
+            pass
+        os.replace(tmp_path, container_path)
+        os.chmod(container_path, mode)
+    except Exception:
+        if tmp_fd >= 0:
+            try: os.close(tmp_fd)
+            except OSError: pass
+        if os.path.exists(tmp_path):
+            try: os.replace(tmp_path, tmp_path + ".aborted")
+            except OSError: pass
+        raise
+
+
 def sync_one_pair(host_path, container_path):
     """Sync a single credential pair. Returns True if file was updated."""
     if not os.path.isfile(host_path):
         return False
 
     if not os.path.isfile(container_path):
-        os.makedirs(os.path.dirname(container_path), exist_ok=True)
-        shutil.copy2(host_path, container_path)
-        os.chmod(container_path, 0o600)
+        atomic_copy(host_path, container_path)
         log(f"INIT {os.path.basename(container_path)}")
         return True
 
@@ -157,8 +187,7 @@ def sync_one_pair(host_path, container_path):
             log(f"SKIP {os.path.basename(container_path)} (container token is fresher)")
             return False
 
-    shutil.copy2(host_path, container_path)
-    os.chmod(container_path, 0o600)
+    atomic_copy(host_path, container_path)
     log(f"SYNC {os.path.basename(container_path)}")
     return True
 
