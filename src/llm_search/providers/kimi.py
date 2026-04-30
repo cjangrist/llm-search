@@ -50,8 +50,8 @@ api_key = "{api_key}"
 '''
 
 
-def build_kimi_arguments(model, augmented_prompt, sandbox_dir):
-    """Assemble the kimi CLI argv, including the api-key config override when KIMI_API_KEY is set."""
+def build_kimi_arguments(model, augmented_prompt, sandbox_dir, api_key):
+    """Assemble the kimi CLI argv, including the api-key config override when api_key is non-empty."""
     kimi_arguments = [
         "--print", "--no-thinking", "--verbose",
         "--output-format", "stream-json",
@@ -61,13 +61,12 @@ def build_kimi_arguments(model, augmented_prompt, sandbox_dir):
     if model:
         kimi_arguments = ["-m", model, *kimi_arguments]
 
-    kimi_api_key = os.getenv("KIMI_API_KEY", "").strip()
-    if kimi_api_key:
-        logger.info("call_kimi: using KIMI_API_KEY env (%d chars) via inline --config override", len(kimi_api_key))
-        config_override = API_KEY_CONFIG_TEMPLATE.format(api_key=kimi_api_key)
+    if api_key:
+        logger.info("call_kimi: using api_key (%d chars) via inline --config override", len(api_key))
+        config_override = API_KEY_CONFIG_TEMPLATE.format(api_key=api_key)
         kimi_arguments = ["--config", config_override, *kimi_arguments]
     else:
-        logger.info("call_kimi: no KIMI_API_KEY env set, falling back to OAuth config")
+        logger.info("call_kimi: no api_key passed, falling back to OAuth config")
     return kimi_arguments
 
 
@@ -89,7 +88,7 @@ def redact_argv_for_logging(kimi_arguments):
     return redacted
 
 
-def call_kimi(prompt, model, timeout_seconds, stderr_log_path=None):
+def call_kimi(prompt, model, timeout_seconds, stderr_log_path, sandbox_dir, api_key, environment):
     """Call Kimi CLI in print mode via sh with stream-json output and captured stderr."""
     logger.info("call_kimi(model=%s, timeout=%ds, stderr_log=%s)", model or "(config default)", timeout_seconds, stderr_log_path)
     system_prompt = load_system_prompt()
@@ -100,16 +99,15 @@ def call_kimi(prompt, model, timeout_seconds, stderr_log_path=None):
     logger.info("call_kimi: system_prompt=%d chars, user_prompt=%d chars, augmented=%d chars",
                 len(system_prompt), len(prompt), len(augmented_prompt))
 
-    sandbox_dir = KIMI_SANDBOX_DIR
     os.makedirs(sandbox_dir, exist_ok=True)
-    kimi_arguments = build_kimi_arguments(model, augmented_prompt, sandbox_dir)
+    kimi_arguments = build_kimi_arguments(model, augmented_prompt, sandbox_dir, api_key)
     logger.info("Running: kimi %s (prompt=%d chars)", " ".join(redact_argv_for_logging(kimi_arguments)), len(augmented_prompt))
 
     stderr_file = open(stderr_log_path, "w") if stderr_log_path else None
     try:
         raw_output = sh.kimi(
             *kimi_arguments,
-            _env={**os.environ}, _ok_code=[0, 1], _encoding="utf-8",
+            _env=dict(environment), _ok_code=[0, 1], _encoding="utf-8",
             _err=stderr_file, _timeout=timeout_seconds,
         )
     finally:
@@ -122,7 +120,7 @@ def call_kimi(prompt, model, timeout_seconds, stderr_log_path=None):
     return raw_text
 
 
-def run_search(prompt, model, output_dir, timeout):
+def run_search(prompt, model, output_dir, timeout, environment=None, sandbox_dir=None, api_key=None):
     """Run Kimi web search and return OpenAI-format result.
 
     Args:
@@ -130,6 +128,9 @@ def run_search(prompt, model, output_dir, timeout):
         model: Kimi model id (e.g. "kimi-code/kimi-for-coding"), or empty for config default.
         output_dir: Directory to save intermediate files.
         timeout: CLI timeout in seconds.
+        environment: Process environment dict (defaults to os.environ).
+        sandbox_dir: CWD for the kimi CLI subprocess (defaults to KIMI_SANDBOX_DIR config).
+        api_key: Kimi API key (defaults to KIMI_API_KEY env var). Empty string falls back to OAuth.
 
     Returns:
         Tuple of (openai_output_list, model_response_text).
@@ -140,7 +141,11 @@ def run_search(prompt, model, output_dir, timeout):
     search_json_path = os.path.join(output_dir, f"kimi_search_{timestamp}.json")
     stderr_log_path = os.path.join(output_dir, f"kimi_stderr_{timestamp}.log")
 
-    raw_text = call_kimi(prompt, model, timeout, stderr_log_path)
+    resolved_environment = environment if environment is not None else os.environ
+    resolved_sandbox_dir = sandbox_dir if sandbox_dir is not None else KIMI_SANDBOX_DIR
+    resolved_api_key = api_key if api_key is not None else os.getenv("KIMI_API_KEY", "").strip()
+    raw_text = call_kimi(prompt, model, timeout, stderr_log_path,
+                         resolved_sandbox_dir, resolved_api_key, resolved_environment)
     stream_events = parse_stream_events(raw_text)
     with open(raw_jsonl_path, "w") as output_file:
         json.dump(stream_events, output_file, indent=2)
@@ -187,7 +192,11 @@ def main():
     search_json_path = os.path.join(args.raw_dir, f"kimi_search_{timestamp}.json")
 
     logger.info("Calling Kimi model=%s", args.model or "(config default)")
-    raw_text = call_kimi(args.prompt, args.model, args.timeout)
+    stderr_log_path = os.path.join(args.raw_dir, f"kimi_stderr_{timestamp}.log")
+    raw_text = call_kimi(
+        args.prompt, args.model, args.timeout, stderr_log_path,
+        KIMI_SANDBOX_DIR, os.getenv("KIMI_API_KEY", "").strip(), os.environ,
+    )
 
     stream_events = parse_stream_events(raw_text)
     with open(raw_jsonl_path, "w") as output_file:
