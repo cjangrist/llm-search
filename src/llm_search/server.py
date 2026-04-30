@@ -136,91 +136,74 @@ def make_error_response(message, status_code, param=None):
     }), status_code
 
 
+def handle_chat_completions():
+    """OpenAI-compatible Chat Completions endpoint with web search grounding.
+
+    Request body:
+        model (str): "provider/model_name" (e.g. "claude/haiku")
+        messages (list): OpenAI-format messages array
+        timeout (int, optional): CLI timeout in seconds
+    """
+    body = request.get_json(force=True)
+
+    parsed, parse_error = parse_model_field(body.get("model"))
+    if parse_error:
+        return make_error_response(parse_error, 400, "model")
+    provider, model_name = parsed
+
+    messages = body.get("messages", [])
+    if not messages:
+        return make_error_response("messages is required and must be a non-empty array", 400, "messages")
+
+    prompt = extract_prompt_from_messages(messages)
+    if not prompt:
+        return make_error_response("messages must contain at least one user message with content", 400, "messages")
+
+    timeout = body.get("timeout") or PROVIDER_DEFAULTS[provider]["timeout"]
+    model_string = body.get("model")
+    logger.info("POST /v1/chat/completions model=%s prompt=%s", model_string, prompt[:80])
+
+    started_at = time.time()
+    response_body = None
+    runtime_error = None
+    try:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        openai_output, model_response_text = PROVIDER_RUNNERS[provider](prompt, model_name, OUTPUT_DIR, timeout)
+        response_body = build_chat_completion_response(model_string, model_response_text, openai_output)
+        return jsonify(response_body)
+    except Exception as search_error:
+        runtime_error = str(search_error)
+        logger.error("Chat completion failed: %s\n%s", search_error, traceback.format_exc())
+        return make_error_response(str(search_error), 500)
+    finally:
+        latency_seconds = time.time() - started_at
+        logger.info("Completed in %.1fs (provider=%s model=%s)", latency_seconds, provider, model_name)
+        write_request_log(provider, model_name, prompt, body, response_body,
+                          latency_seconds, runtime_error, OUTPUT_DIR, started_at)
+
+
+def handle_health():
+    """Health check endpoint for container probes and load balancers."""
+    return jsonify({"status": "ok"})
+
+
+def handle_providers():
+    """List configured providers with their default models and timeouts."""
+    return jsonify({
+        provider_name: {
+            "default_model": defaults["model"],
+            "default_timeout": defaults["timeout"],
+        }
+        for provider_name, defaults in PROVIDER_DEFAULTS.items()
+    })
+
+
 def create_app():
-    """Create and configure the Flask application."""
+    """Create and configure the Flask application by binding module-level handlers."""
     flask_app = Flask(__name__)
-
-    @flask_app.route("/v1/chat/completions", methods=["POST"])
-    def chat_completions():
-        """OpenAI-compatible Chat Completions endpoint with web search grounding.
-
-        Accepts any API key (or none) in the Authorization header for
-        compatibility with OpenAI client libraries that require a key.
-
-        Request body:
-            model (str): "provider/model_name" (e.g. "claude/haiku")
-            messages (list): OpenAI-format messages array
-            timeout (int, optional): CLI timeout in seconds
-
-        Returns:
-            OpenAI Chat Completions JSON with url_citation annotations.
-        """
-        body = request.get_json(force=True)
-
-        model_string = body.get("model")
-        parsed, error_message = parse_model_field(model_string)
-        if error_message:
-            return make_error_response(error_message, 400, "model")
-        provider, model_name = parsed
-
-        messages = body.get("messages", [])
-        if not messages:
-            return make_error_response(
-                "messages is required and must be a non-empty array", 400, "messages"
-            )
-
-        prompt = extract_prompt_from_messages(messages)
-        if not prompt:
-            return make_error_response(
-                "messages must contain at least one user message with content", 400, "messages"
-            )
-
-        timeout = body.get("timeout") or PROVIDER_DEFAULTS[provider]["timeout"]
-
-        logger.info("POST /v1/chat/completions model=%s prompt=%s", model_string, prompt[:80])
-
-        started_at = time.time()
-        response_body = None
-        error_message = None
-
-        try:
-            os.makedirs(OUTPUT_DIR, exist_ok=True)
-            openai_output, model_response_text = PROVIDER_RUNNERS[provider](
-                prompt, model_name, OUTPUT_DIR, timeout
-            )
-            response = build_chat_completion_response(
-                model_string, model_response_text, openai_output
-            )
-            response_body = response
-            return jsonify(response)
-        except Exception as search_error:
-            error_message = str(search_error)
-            logger.error("Chat completion failed: %s\n%s", search_error, traceback.format_exc())
-            return make_error_response(str(search_error), 500)
-        finally:
-            latency_seconds = time.time() - started_at
-            logger.info("Completed in %.1fs (provider=%s model=%s)", latency_seconds, provider, model_name)
-            write_request_log(
-                provider, model_name, prompt, body, response_body,
-                latency_seconds, error_message, OUTPUT_DIR, started_at,
-            )
-
-    @flask_app.route("/health", methods=["GET"])
-    def health():
-        """Health check endpoint for container probes and load balancers."""
-        return jsonify({"status": "ok"})
-
-    @flask_app.route("/providers", methods=["GET"])
-    def providers():
-        """List configured providers with their default models and timeouts."""
-        return jsonify({
-            provider: {
-                "default_model": defaults["model"],
-                "default_timeout": defaults["timeout"],
-            }
-            for provider, defaults in PROVIDER_DEFAULTS.items()
-        })
-
+    flask_app.add_url_rule("/v1/chat/completions", view_func=handle_chat_completions, methods=["POST"])
+    flask_app.add_url_rule("/health", view_func=handle_health, methods=["GET"])
+    flask_app.add_url_rule("/providers", view_func=handle_providers, methods=["GET"])
     return flask_app
 
 
