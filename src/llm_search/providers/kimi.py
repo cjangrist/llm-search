@@ -50,8 +50,8 @@ api_key = "{api_key}"
 '''
 
 
-def build_kimi_arguments(model, augmented_prompt, sandbox_dir, api_key):
-    """Assemble the kimi CLI argv, including the api-key config override when api_key is non-empty."""
+def build_kimi_arguments(model, augmented_prompt, sandbox_dir, config_file_path):
+    """Assemble the kimi CLI argv, optionally pointing at a per-request --config-file."""
     kimi_arguments = [
         "--print", "--no-thinking", "--verbose",
         "--output-format", "stream-json",
@@ -60,17 +60,46 @@ def build_kimi_arguments(model, augmented_prompt, sandbox_dir, api_key):
     ]
     if model:
         kimi_arguments = ["-m", model, *kimi_arguments]
-
-    if api_key:
-        logger.info("call_kimi: using api_key (%d chars) via inline --config override", len(api_key))
-        config_override = API_KEY_CONFIG_TEMPLATE.format(api_key=api_key)
-        kimi_arguments = ["--config", config_override, *kimi_arguments]
-    else:
-        logger.info("call_kimi: no api_key passed, falling back to OAuth config")
+    if config_file_path:
+        kimi_arguments = ["--config-file", config_file_path, *kimi_arguments]
     return kimi_arguments
 
 
-REDACT_VALUE_FLAGS = {"-p", "--prompt", "-c", "--command", "--config"}
+def write_kimi_config_file(api_key, output_dir, request_id):
+    """Render the api-key TOML to a per-request file with mode 0o600. Returns the path or None.
+
+    Uses str.replace (not .format) so api keys containing literal `{` or `}` don't blow up.
+    """
+    if not api_key:
+        return None
+    config_path = os.path.join(output_dir, f"kimi_apiconfig_{request_id}.toml")
+    rendered = API_KEY_CONFIG_TEMPLATE.replace("{api_key}", api_key)
+    fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w") as config_file:
+            config_file.write(rendered)
+    except Exception:
+        os.close(fd) if not config_file.closed else None  # type: ignore[name-defined]
+        raise
+    logger.info("write_kimi_config_file: wrote %s (mode 0o600, %d chars)", config_path, len(rendered))
+    return config_path
+
+
+def discard_kimi_config_file(config_path, output_dir):
+    """Move a used kimi config file to a request-scoped trash subdir (RULE_07: no rm)."""
+    if not config_path or not os.path.isfile(config_path):
+        return
+    trash_dir = os.path.join(output_dir, ".trash", datetime.now().strftime("%Y%m%d"))
+    os.makedirs(trash_dir, mode=0o700, exist_ok=True)
+    trashed = os.path.join(trash_dir, os.path.basename(config_path))
+    try:
+        os.replace(config_path, trashed)
+        logger.info("discard_kimi_config_file: moved %s -> %s", config_path, trashed)
+    except OSError as move_error:
+        logger.warning("discard_kimi_config_file: failed to move %s: %s", config_path, move_error)
+
+
+REDACT_VALUE_FLAGS = {"-p", "--prompt", "-c", "--command", "--config", "--config-file"}
 
 
 def redact_argv_for_logging(kimi_arguments):
@@ -88,8 +117,13 @@ def redact_argv_for_logging(kimi_arguments):
     return redacted
 
 
-def call_kimi(prompt, model, timeout_seconds, stderr_log_path, sandbox_dir, api_key, environment):
-    """Call Kimi CLI in print mode via sh with stream-json output and captured stderr."""
+def call_kimi(prompt, model, timeout_seconds, stderr_log_path, sandbox_dir, api_key, environment, output_dir, request_id):
+    """Call Kimi CLI in print mode via sh with stream-json output and captured stderr.
+
+    The api-key TOML is written to a per-request --config-file (mode 0600) instead of
+    being passed inline as the value of --config — keeps the secret out of /proc/<pid>/cmdline,
+    ps captures, and any other process that can read kernel argv state.
+    """
     logger.info("call_kimi(model=%s, timeout=%ds, stderr_log=%s)", model or "(config default)", timeout_seconds, stderr_log_path)
     system_prompt = load_system_prompt()
     augmented_prompt = (
@@ -100,7 +134,13 @@ def call_kimi(prompt, model, timeout_seconds, stderr_log_path, sandbox_dir, api_
                 len(system_prompt), len(prompt), len(augmented_prompt))
 
     os.makedirs(sandbox_dir, exist_ok=True)
-    kimi_arguments = build_kimi_arguments(model, augmented_prompt, sandbox_dir, api_key)
+    config_file_path = write_kimi_config_file(api_key, output_dir, request_id)
+    if config_file_path:
+        logger.info("call_kimi: api_key supplied — using --config-file %s", config_file_path)
+    else:
+        logger.info("call_kimi: no api_key supplied, falling back to OAuth config")
+
+    kimi_arguments = build_kimi_arguments(model, augmented_prompt, sandbox_dir, config_file_path)
     logger.info("Running: kimi %s (prompt=%d chars)", " ".join(redact_argv_for_logging(kimi_arguments)), len(augmented_prompt))
 
     stderr_file = open(stderr_log_path, "w") if stderr_log_path else None
@@ -113,6 +153,7 @@ def call_kimi(prompt, model, timeout_seconds, stderr_log_path, sandbox_dir, api_
     finally:
         if stderr_file is not None:
             stderr_file.close()
+        discard_kimi_config_file(config_file_path, output_dir)
 
     raw_text = str(raw_output)
     stderr_size = os.path.getsize(stderr_log_path) if stderr_log_path and os.path.isfile(stderr_log_path) else 0
@@ -147,7 +188,8 @@ def run_search(prompt, model, output_dir, timeout, request_id=None, environment=
     resolved_sandbox_dir = sandbox_dir if sandbox_dir is not None else KIMI_SANDBOX_DIR
     resolved_api_key = api_key if api_key is not None else os.getenv("KIMI_API_KEY", "").strip()
     raw_text = call_kimi(prompt, model, timeout, stderr_log_path,
-                         resolved_sandbox_dir, resolved_api_key, resolved_environment)
+                         resolved_sandbox_dir, resolved_api_key, resolved_environment,
+                         output_dir, request_id)
     stream_events = parse_stream_events(raw_text)
     with open(raw_jsonl_path, "w") as output_file:
         json.dump(stream_events, output_file, indent=2)
@@ -189,15 +231,16 @@ def main():
     args = parser.parse_args()
     setup_colorized_logging(verbose=args.verbose)
 
-    timestamp = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-    raw_jsonl_path = os.path.join(args.raw_dir, f"kimi_raw_{timestamp}.json")
-    search_json_path = os.path.join(args.raw_dir, f"kimi_search_{timestamp}.json")
+    request_id = uuid.uuid4().hex[:12]
+    raw_jsonl_path = os.path.join(args.raw_dir, f"kimi_raw_{request_id}.json")
+    search_json_path = os.path.join(args.raw_dir, f"kimi_search_{request_id}.json")
 
-    logger.info("Calling Kimi model=%s", args.model or "(config default)")
-    stderr_log_path = os.path.join(args.raw_dir, f"kimi_stderr_{timestamp}.log")
+    logger.info("Calling Kimi model=%s request_id=%s", args.model or "(config default)", request_id)
+    stderr_log_path = os.path.join(args.raw_dir, f"kimi_stderr_{request_id}.log")
     raw_text = call_kimi(
         args.prompt, args.model, args.timeout, stderr_log_path,
         KIMI_SANDBOX_DIR, os.getenv("KIMI_API_KEY", "").strip(), os.environ,
+        args.raw_dir, request_id,
     )
 
     stream_events = parse_stream_events(raw_text)
