@@ -8,6 +8,7 @@ Usage: python -m llm_search.providers.codex "your prompt" [-m model] [--raw-dir 
 """
 
 import argparse
+import itertools
 import json
 import logging
 import os
@@ -268,6 +269,24 @@ def build_openai_format(search_queries, model_text, native_annotations):
     return output
 
 
+def parse_codex_outputs(events, trace_log_path):
+    """Parse codex JSONL events + RUST_LOG trace into (search_queries, native_annotations, model_response).
+
+    Prefers the native OpenAI Responses API trace (web_search_call items + output_text annotations)
+    when available, falls back to the JSONL `web_search` items otherwise.
+    """
+    sse_events = parse_trace_log_sse_events(trace_log_path)
+    web_search_calls, output_text_items = extract_native_api_items(sse_events)
+    native_annotations = list(itertools.chain.from_iterable(
+        item.get("annotations", []) for item in output_text_items
+    ))
+    if web_search_calls:
+        search_queries = extract_search_queries_from_api(web_search_calls)
+    else:
+        search_queries = extract_search_queries_from_jsonl(events)
+    return search_queries, native_annotations, extract_model_response(events)
+
+
 def run_search(prompt, model, output_dir, timeout):
     """Run Codex web search and return OpenAI-format result.
 
@@ -291,19 +310,7 @@ def run_search(prompt, model, output_dir, timeout):
     with open(raw_jsonl_path, "w") as output_file:
         json.dump(events, output_file, indent=2)
 
-    sse_events = parse_trace_log_sse_events(trace_log_path)
-    web_search_calls, output_text_items = extract_native_api_items(sse_events)
-
-    native_annotations = []
-    for output_text_item in output_text_items:
-        native_annotations.extend(output_text_item.get("annotations", []))
-
-    if web_search_calls:
-        search_queries = extract_search_queries_from_api(web_search_calls)
-    else:
-        search_queries = extract_search_queries_from_jsonl(events)
-
-    model_response = extract_model_response(events)
+    search_queries, native_annotations, model_response = parse_codex_outputs(events, trace_log_path)
 
     failure_message = detect_provider_failure(events, model_response)
     if failure_message:
@@ -311,10 +318,8 @@ def run_search(prompt, model, output_dir, timeout):
         raise RuntimeError(f"codex provider failed: {failure_message}")
 
     openai_output = build_openai_format(search_queries, model_response, native_annotations)
-
     with open(search_json_path, "w") as output_file:
         json.dump(openai_output, output_file, indent=2)
-
     logger.debug("run_search returning %d chars response", len(model_response))
     return openai_output, model_response
 
