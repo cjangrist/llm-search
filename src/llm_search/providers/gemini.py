@@ -21,6 +21,7 @@ from llm_search.config import (
     GEMINI_DEFAULT_OUTPUT_DIR,
     GEMINI_SANDBOX_DIR,
     GEMINI_SCRIPT_PATH,
+    PROVIDER_DEFAULTS,
     VERTEX_REDIRECT_PREFIX,
 )
 from llm_search.prompts import load_system_prompt
@@ -70,10 +71,14 @@ def resolve_all_uris(uri_list):
     return resolved_map
 
 
-def find_gemini_script():
-    """Locate the gemini CLI entry point for running under bun."""
-    if GEMINI_SCRIPT_PATH and os.path.isfile(GEMINI_SCRIPT_PATH):
-        return GEMINI_SCRIPT_PATH
+def find_gemini_script(script_path_override):
+    """Locate the gemini CLI entry point for running under bun.
+
+    Preference order: explicit script_path_override (config-supplied), else resolve
+    the `gemini` binary from PATH, dereferencing symlinks (npm shims).
+    """
+    if script_path_override and os.path.isfile(script_path_override):
+        return script_path_override
     gemini_bin = str(sh.which("gemini")).strip()
     if os.path.islink(gemini_bin):
         return os.path.realpath(gemini_bin)
@@ -83,9 +88,9 @@ def find_gemini_script():
 GEMINI_CLI_FLAGS = ("-o", "stream-json", "--yolo", "--skip-trust")
 
 
-def invoke_gemini_via_bun(model, augmented_prompt, gemini_environment, sandbox_dir, timeout_seconds):
+def invoke_gemini_via_bun(model, augmented_prompt, gemini_environment, sandbox_dir, timeout_seconds, script_path):
     """Run gemini-cli under bun (faster cold-start than node)."""
-    gemini_script = find_gemini_script()
+    gemini_script = find_gemini_script(script_path)
     logger.debug("Running gemini via bun: %s", gemini_script)
     return sh.bun(
         gemini_script, "-m", model, "-p", augmented_prompt, *GEMINI_CLI_FLAGS,
@@ -94,8 +99,8 @@ def invoke_gemini_via_bun(model, augmented_prompt, gemini_environment, sandbox_d
     )
 
 
-def invoke_gemini_via_node(model, augmented_prompt, gemini_environment, sandbox_dir, timeout_seconds):
-    """Run gemini-cli under node (fallback when bun isn't on PATH)."""
+def invoke_gemini_via_node(model, augmented_prompt, gemini_environment, sandbox_dir, timeout_seconds, script_path):
+    """Run gemini-cli under node (fallback when bun isn't on PATH). script_path unused on this branch."""
     logger.debug("bun not found, falling back to node runtime")
     return sh.gemini(
         "-m", model, "-p", augmented_prompt, *GEMINI_CLI_FLAGS,
@@ -104,7 +109,7 @@ def invoke_gemini_via_node(model, augmented_prompt, gemini_environment, sandbox_
     )
 
 
-def call_gemini(prompt, model, output_dir, timeout_seconds=180):
+def call_gemini(prompt, model, output_dir, timeout_seconds, environment, sandbox_dir, script_path):
     """Call Gemini CLI (via bun if available, else node), return raw text and activity log path."""
     logger.debug("call_gemini(model=%s, output_dir=%s, timeout=%ds)", model, output_dir, timeout_seconds)
     activity_log_path = os.path.join(
@@ -112,17 +117,16 @@ def call_gemini(prompt, model, output_dir, timeout_seconds=180):
         f"gemini_activity_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.jsonl",
     )
     gemini_environment = {
-        **os.environ,
+        **environment,
         "GEMINI_CLI_ACTIVITY_LOG_TARGET": activity_log_path,
         "GEMINI_SYSTEM_MD": SYSTEM_PROMPT_FILE_PATH,
     }
     augmented_prompt = f'CRITICAL RULE-> using web_search answer: "{prompt}"'
 
-    sandbox_dir = GEMINI_SANDBOX_DIR
     os.makedirs(sandbox_dir, exist_ok=True)
 
     runner = invoke_gemini_via_bun if sh.which("bun") else invoke_gemini_via_node
-    raw_output = runner(model, augmented_prompt, gemini_environment, sandbox_dir, timeout_seconds)
+    raw_output = runner(model, augmented_prompt, gemini_environment, sandbox_dir, timeout_seconds, script_path)
 
     raw_text = str(raw_output)
     logger.debug("call_gemini returned %d chars, activity_log=%s", len(raw_text), activity_log_path)
@@ -306,7 +310,7 @@ def extract_model_response(grounding_blocks, stream_events):
     )
 
 
-def run_search(prompt, model, output_dir, timeout):
+def run_search(prompt, model, output_dir, timeout, environment=None, sandbox_dir=None, script_path=None):
     """Run Gemini web search and return OpenAI-format result.
 
     Args:
@@ -314,6 +318,9 @@ def run_search(prompt, model, output_dir, timeout):
         model: Gemini model name (e.g. "search-fast").
         output_dir: Directory to save intermediate files.
         timeout: CLI timeout in seconds.
+        environment: Process environment dict (defaults to os.environ).
+        sandbox_dir: CWD for the gemini CLI subprocess (defaults to GEMINI_SANDBOX_DIR config).
+        script_path: Override gemini-cli's bundled JS entrypoint (defaults to GEMINI_SCRIPT_PATH config).
 
     Returns:
         Tuple of (openai_output_list, model_response_text).
@@ -323,7 +330,12 @@ def run_search(prompt, model, output_dir, timeout):
     raw_json_path = os.path.join(output_dir, f"gemini_raw_{timestamp}.json")
     grounding_json_path = os.path.join(output_dir, f"gemini_grounding_{timestamp}.json")
 
-    raw_text, activity_log_path = call_gemini(prompt, model, output_dir, timeout)
+    raw_text, activity_log_path = call_gemini(
+        prompt, model, output_dir, timeout,
+        environment if environment is not None else os.environ,
+        sandbox_dir if sandbox_dir is not None else GEMINI_SANDBOX_DIR,
+        script_path if script_path is not None else GEMINI_SCRIPT_PATH,
+    )
     stream_events = parse_stream_events(raw_text)
     with open(raw_json_path, "w") as output_file:
         json.dump(stream_events, output_file, indent=2)
@@ -363,7 +375,10 @@ def main():
     grounding_json_path = os.path.join(args.raw_dir, f"gemini_grounding_{timestamp}.json")
 
     logger.info("Calling Gemini model=%s", args.model)
-    raw_text, activity_log_path = call_gemini(args.prompt, args.model, args.raw_dir)
+    raw_text, activity_log_path = call_gemini(
+        args.prompt, args.model, args.raw_dir, PROVIDER_DEFAULTS["gemini"]["timeout"],
+        os.environ, GEMINI_SANDBOX_DIR, GEMINI_SCRIPT_PATH,
+    )
 
     stream_events = parse_stream_events(raw_text)
     with open(raw_json_path, "w") as output_file:
