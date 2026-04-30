@@ -284,7 +284,7 @@ def build_openai_format(search_queries, search_sources, model_text):
     return output
 
 
-def run_search(prompt, model, output_dir, timeout, environment=None):
+def run_search(prompt, model, output_dir, timeout, request_id=None, environment=None):
     """Run Claude Code web search and return OpenAI-format result.
 
     Args:
@@ -292,16 +292,18 @@ def run_search(prompt, model, output_dir, timeout, environment=None):
         model: Claude model name (e.g. "haiku").
         output_dir: Directory to save intermediate JSON files.
         timeout: CLI timeout in seconds.
+        request_id: Per-request id used as the artefact filename suffix (defaults to a fresh uuid hex).
         environment: Process environment dict to inherit (defaults to os.environ).
             Strips CLAUDECODE_*/CLAUDE_CODE_* keys and sets NODE_NO_WARNINGS=1.
 
     Returns:
         Tuple of (openai_output_list, model_response_text).
     """
-    logger.debug("run_search(model=%s, timeout=%d)", model, timeout)
-    timestamp = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-    raw_json_path = os.path.join(output_dir, f"claude_raw_{timestamp}.json")
-    search_json_path = os.path.join(output_dir, f"claude_search_{timestamp}.json")
+    logger.debug("run_search(model=%s, timeout=%d, request_id=%s)", model, timeout, request_id)
+    if request_id is None:
+        request_id = uuid.uuid4().hex[:12]
+    raw_json_path = os.path.join(output_dir, f"claude_raw_{request_id}.json")
+    search_json_path = os.path.join(output_dir, f"claude_search_{request_id}.json")
 
     raw_text = call_claude(prompt, model, output_dir, timeout, environment if environment is not None else os.environ)
     stream_events = parse_stream_events(raw_text)

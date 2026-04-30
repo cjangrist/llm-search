@@ -287,7 +287,7 @@ def parse_codex_outputs(events, trace_log_path):
     return search_queries, native_annotations, extract_model_response(events)
 
 
-def run_search(prompt, model, output_dir, timeout, environment=None):
+def run_search(prompt, model, output_dir, timeout, request_id=None, environment=None):
     """Run Codex web search and return OpenAI-format result.
 
     Args:
@@ -295,17 +295,19 @@ def run_search(prompt, model, output_dir, timeout, environment=None):
         model: Codex model name (e.g. "gpt-5.5").
         output_dir: Directory to save intermediate files.
         timeout: CLI timeout in seconds.
+        request_id: Per-request id used as the artefact filename suffix (defaults to a fresh uuid hex).
         environment: Process environment dict to inherit (defaults to os.environ).
             RUST_LOG=codex_api=trace is overlaid on top to capture SSE events.
 
     Returns:
         Tuple of (openai_output_list, model_response_text).
     """
-    logger.debug("run_search(model=%s, timeout=%d)", model, timeout)
-    timestamp = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-    raw_jsonl_path = os.path.join(output_dir, f"codex_raw_{timestamp}.jsonl")
-    trace_log_path = os.path.join(output_dir, f"codex_trace_{timestamp}.log")
-    search_json_path = os.path.join(output_dir, f"codex_search_{timestamp}.json")
+    logger.debug("run_search(model=%s, timeout=%d, request_id=%s)", model, timeout, request_id)
+    if request_id is None:
+        request_id = uuid.uuid4().hex[:12]
+    raw_jsonl_path = os.path.join(output_dir, f"codex_raw_{request_id}.jsonl")
+    trace_log_path = os.path.join(output_dir, f"codex_trace_{request_id}.log")
+    search_json_path = os.path.join(output_dir, f"codex_search_{request_id}.json")
 
     raw_text = call_codex(prompt, model, timeout, trace_log_path, environment if environment is not None else os.environ)
     events = parse_jsonl_events(raw_text)

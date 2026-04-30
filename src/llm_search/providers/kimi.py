@@ -120,7 +120,7 @@ def call_kimi(prompt, model, timeout_seconds, stderr_log_path, sandbox_dir, api_
     return raw_text
 
 
-def run_search(prompt, model, output_dir, timeout, environment=None, sandbox_dir=None, api_key=None):
+def run_search(prompt, model, output_dir, timeout, request_id=None, environment=None, sandbox_dir=None, api_key=None):
     """Run Kimi web search and return OpenAI-format result.
 
     Args:
@@ -128,6 +128,7 @@ def run_search(prompt, model, output_dir, timeout, environment=None, sandbox_dir
         model: Kimi model id (e.g. "kimi-code/kimi-for-coding"), or empty for config default.
         output_dir: Directory to save intermediate files.
         timeout: CLI timeout in seconds.
+        request_id: Per-request id used as the artefact filename suffix (defaults to a fresh uuid hex).
         environment: Process environment dict (defaults to os.environ).
         sandbox_dir: CWD for the kimi CLI subprocess (defaults to KIMI_SANDBOX_DIR config).
         api_key: Kimi API key (defaults to KIMI_API_KEY env var). Empty string falls back to OAuth.
@@ -135,11 +136,12 @@ def run_search(prompt, model, output_dir, timeout, environment=None, sandbox_dir
     Returns:
         Tuple of (openai_output_list, model_response_text).
     """
-    logger.info("run_search(model=%s, timeout=%d, output_dir=%s)", model or "(config default)", timeout, output_dir)
-    timestamp = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-    raw_jsonl_path = os.path.join(output_dir, f"kimi_raw_{timestamp}.json")
-    search_json_path = os.path.join(output_dir, f"kimi_search_{timestamp}.json")
-    stderr_log_path = os.path.join(output_dir, f"kimi_stderr_{timestamp}.log")
+    logger.info("run_search(model=%s, timeout=%d, output_dir=%s, request_id=%s)", model or "(config default)", timeout, output_dir, request_id)
+    if request_id is None:
+        request_id = uuid.uuid4().hex[:12]
+    raw_jsonl_path = os.path.join(output_dir, f"kimi_raw_{request_id}.json")
+    search_json_path = os.path.join(output_dir, f"kimi_search_{request_id}.json")
+    stderr_log_path = os.path.join(output_dir, f"kimi_stderr_{request_id}.log")
 
     resolved_environment = environment if environment is not None else os.environ
     resolved_sandbox_dir = sandbox_dir if sandbox_dir is not None else KIMI_SANDBOX_DIR

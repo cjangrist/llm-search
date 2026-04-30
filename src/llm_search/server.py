@@ -55,40 +55,45 @@ def parse_model_field(model_string):
     return (provider, model_name), None
 
 
-def read_provider_files(provider, output_dir, started_at):
-    """Read intermediate files written by the provider during this request."""
-    prefix_map = {
-        "codex": ["codex_raw_*.jsonl", "codex_trace_*.log", "codex_search_*.json"],
-        "claude": ["claude_raw_*.json", "claude_search_*.json"],
-        "gemini": ["gemini_raw_*.json", "gemini_grounding_*.json", "gemini_activity_*.log"],
-        "kimi": ["kimi_raw_*.json", "kimi_search_*.json", "kimi_stderr_*.log"],
-    }
+PROVIDER_ARTEFACT_TEMPLATES = {
+    "codex": ["codex_raw_{rid}.jsonl", "codex_trace_{rid}.log", "codex_search_{rid}.json"],
+    "claude": ["claude_raw_{rid}.json", "claude_search_{rid}.json"],
+    "gemini": ["gemini_raw_{rid}.json", "gemini_grounding_{rid}.json", "gemini_activity_{rid}.jsonl"],
+    "kimi": ["kimi_raw_{rid}.json", "kimi_search_{rid}.json", "kimi_stderr_{rid}.log"],
+}
+
+
+def read_provider_files(provider, output_dir, request_id):
+    """Read intermediate files for this exact request_id (no glob, no mtime filter)."""
     file_contents = {}
-    for pattern in prefix_map.get(provider, []):
-        for filepath in glob.glob(os.path.join(output_dir, pattern)):
-            if os.path.getmtime(filepath) >= started_at:
-                try:
-                    with open(filepath) as file_handle:
-                        content = file_handle.read()
-                    try:
-                        file_contents[os.path.basename(filepath)] = json.loads(content)
-                    except json.JSONDecodeError:
-                        file_contents[os.path.basename(filepath)] = content
-                except OSError:
-                    pass
+    for filename_template in PROVIDER_ARTEFACT_TEMPLATES.get(provider, []):
+        filepath = os.path.join(output_dir, filename_template.format(rid=request_id))
+        if not os.path.isfile(filepath):
+            continue
+        try:
+            with open(filepath) as file_handle:
+                content = file_handle.read()
+        except OSError as read_error:
+            logger.warning("Failed to read provider artefact %s: %s", filepath, read_error)
+            continue
+        try:
+            file_contents[os.path.basename(filepath)] = json.loads(content)
+        except json.JSONDecodeError:
+            file_contents[os.path.basename(filepath)] = content
     return file_contents
 
 
-def write_request_log(provider, model_name, prompt, request_body, response_body, latency_seconds, error, output_dir, started_at):
+def write_request_log(provider, model_name, prompt, request_body, response_body, latency_seconds, error, output_dir, started_at, request_id):
     """Write a unified JSON request/response log to LOGS_DIR."""
     os.makedirs(LOGS_DIR, exist_ok=True)
     timestamp_str = datetime.fromtimestamp(started_at, tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
-    log_path = os.path.join(LOGS_DIR, f"request_{provider}_{timestamp_str}_{uuid.uuid4().hex[:8]}.json")
+    log_path = os.path.join(LOGS_DIR, f"request_{provider}_{timestamp_str}_{request_id}.json")
 
-    provider_files = read_provider_files(provider, output_dir, started_at)
+    provider_files = read_provider_files(provider, output_dir, request_id)
 
     log_entry = {
         "timestamp_utc": datetime.fromtimestamp(started_at, tz=timezone.utc).isoformat(),
+        "request_id": request_id,
         "provider": provider,
         "model": model_name,
         "latency_seconds": round(latency_seconds, 3),
@@ -161,25 +166,26 @@ def handle_chat_completions():
 
     timeout = body.get("timeout") or PROVIDER_DEFAULTS[provider]["timeout"]
     model_string = body.get("model")
-    logger.info("POST /v1/chat/completions model=%s prompt=%s", model_string, prompt[:80])
+    request_id = uuid.uuid4().hex[:12]
+    logger.info("POST /v1/chat/completions request_id=%s model=%s prompt=%s", request_id, model_string, prompt[:80])
 
     started_at = time.time()
     response_body = None
     runtime_error = None
     try:
         os.makedirs(OUTPUT_DIR, exist_ok=True)
-        openai_output, model_response_text = PROVIDER_RUNNERS[provider](prompt, model_name, OUTPUT_DIR, timeout)
+        openai_output, model_response_text = PROVIDER_RUNNERS[provider](prompt, model_name, OUTPUT_DIR, timeout, request_id)
         response_body = build_chat_completion_response(model_string, model_response_text, openai_output)
         return jsonify(response_body)
     except Exception as search_error:
         runtime_error = str(search_error)
-        logger.error("Chat completion failed: %s\n%s", search_error, traceback.format_exc())
+        logger.error("Chat completion failed (request_id=%s): %s\n%s", request_id, search_error, traceback.format_exc())
         return make_error_response(str(search_error), 500)
     finally:
         latency_seconds = time.time() - started_at
-        logger.info("Completed in %.1fs (provider=%s model=%s)", latency_seconds, provider, model_name)
+        logger.info("Completed in %.1fs (request_id=%s provider=%s model=%s)", latency_seconds, request_id, provider, model_name)
         write_request_log(provider, model_name, prompt, body, response_body,
-                          latency_seconds, runtime_error, OUTPUT_DIR, started_at)
+                          latency_seconds, runtime_error, OUTPUT_DIR, started_at, request_id)
 
 
 def handle_health():

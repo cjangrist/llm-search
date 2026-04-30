@@ -109,13 +109,12 @@ def invoke_gemini_via_node(model, augmented_prompt, gemini_environment, sandbox_
     )
 
 
-def call_gemini(prompt, model, output_dir, timeout_seconds, environment, sandbox_dir, script_path):
+def call_gemini(prompt, model, output_dir, timeout_seconds, environment, sandbox_dir, script_path, request_id=None):
     """Call Gemini CLI (via bun if available, else node), return raw text and activity log path."""
-    logger.debug("call_gemini(model=%s, output_dir=%s, timeout=%ds)", model, output_dir, timeout_seconds)
-    activity_log_path = os.path.join(
-        output_dir,
-        f"gemini_activity_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.jsonl",
-    )
+    logger.debug("call_gemini(model=%s, output_dir=%s, timeout=%ds, request_id=%s)", model, output_dir, timeout_seconds, request_id)
+    if request_id is None:
+        request_id = uuid.uuid4().hex[:12]
+    activity_log_path = os.path.join(output_dir, f"gemini_activity_{request_id}.jsonl")
     gemini_environment = {
         **environment,
         "GEMINI_CLI_ACTIVITY_LOG_TARGET": activity_log_path,
@@ -310,7 +309,7 @@ def extract_model_response(grounding_blocks, stream_events):
     )
 
 
-def run_search(prompt, model, output_dir, timeout, environment=None, sandbox_dir=None, script_path=None):
+def run_search(prompt, model, output_dir, timeout, request_id=None, environment=None, sandbox_dir=None, script_path=None):
     """Run Gemini web search and return OpenAI-format result.
 
     Args:
@@ -318,6 +317,7 @@ def run_search(prompt, model, output_dir, timeout, environment=None, sandbox_dir
         model: Gemini model name (e.g. "search-fast").
         output_dir: Directory to save intermediate files.
         timeout: CLI timeout in seconds.
+        request_id: Per-request id used as the artefact filename suffix (defaults to a fresh uuid hex).
         environment: Process environment dict (defaults to os.environ).
         sandbox_dir: CWD for the gemini CLI subprocess (defaults to GEMINI_SANDBOX_DIR config).
         script_path: Override gemini-cli's bundled JS entrypoint (defaults to GEMINI_SCRIPT_PATH config).
@@ -325,16 +325,18 @@ def run_search(prompt, model, output_dir, timeout, environment=None, sandbox_dir
     Returns:
         Tuple of (openai_output_list, model_response_text).
     """
-    logger.debug("run_search(model=%s, timeout=%d)", model, timeout)
-    timestamp = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-    raw_json_path = os.path.join(output_dir, f"gemini_raw_{timestamp}.json")
-    grounding_json_path = os.path.join(output_dir, f"gemini_grounding_{timestamp}.json")
+    logger.debug("run_search(model=%s, timeout=%d, request_id=%s)", model, timeout, request_id)
+    if request_id is None:
+        request_id = uuid.uuid4().hex[:12]
+    raw_json_path = os.path.join(output_dir, f"gemini_raw_{request_id}.json")
+    grounding_json_path = os.path.join(output_dir, f"gemini_grounding_{request_id}.json")
 
     raw_text, activity_log_path = call_gemini(
         prompt, model, output_dir, timeout,
         environment if environment is not None else os.environ,
         sandbox_dir if sandbox_dir is not None else GEMINI_SANDBOX_DIR,
         script_path if script_path is not None else GEMINI_SCRIPT_PATH,
+        request_id,
     )
     stream_events = parse_stream_events(raw_text)
     with open(raw_json_path, "w") as output_file:
