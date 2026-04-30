@@ -356,29 +356,14 @@ def main():
         json.dump(events, output_file, indent=2)
     logger.info("Raw JSONL saved to %s (%d events)", raw_jsonl_path, len(events))
 
-    sse_events = parse_trace_log_sse_events(trace_log_path)
-    web_search_calls, output_text_items = extract_native_api_items(sse_events)
-    logger.info("Trace log: %d SSE events, %d web_search_calls, %d output_text items",
-                len(sse_events), len(web_search_calls), len(output_text_items))
-
-    native_annotations = []
-    for output_text_item in output_text_items:
-        native_annotations.extend(output_text_item.get("annotations", []))
-
-    if web_search_calls:
-        search_queries = extract_search_queries_from_api(web_search_calls)
-        logger.info("Using native API web_search_call data (%d queries)", len(search_queries))
-    else:
-        search_queries = extract_search_queries_from_jsonl(events)
-        logger.info("Falling back to JSONL web_search data (%d queries)", len(search_queries))
-
-    model_response = extract_model_response(events)
+    search_queries, native_annotations, model_response = parse_codex_outputs(events, trace_log_path)
+    logger.info("Parsed %d queries, %d native annotations, %d response chars",
+                len(search_queries), len(native_annotations), len(model_response))
 
     openai_output = build_openai_format(search_queries, model_response, native_annotations)
     with open(search_json_path, "w") as output_file:
         json.dump(openai_output, output_file, indent=2)
-    logger.info("Search data saved to %s", search_json_path)
-    logger.info("Trace log at %s", trace_log_path)
+    logger.info("Search data saved to %s, trace log at %s", search_json_path, trace_log_path)
 
     print(model_response)
 
