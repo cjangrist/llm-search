@@ -328,6 +328,30 @@ def detect_provider_failure(stream_events, grounding_blocks, model_response):
     return None
 
 
+def make_request_sandbox(parent_sandbox_dir, request_id, ignore_pattern=None):
+    """Create a per-request subdir under parent_sandbox_dir; optionally seed an ignore-pattern file."""
+    request_sandbox = os.path.join(parent_sandbox_dir, request_id)
+    os.makedirs(request_sandbox, mode=0o700, exist_ok=True)
+    if ignore_pattern is not None:
+        for filename, content in ignore_pattern.items():
+            with open(os.path.join(request_sandbox, filename), "w") as ignore_file:
+                ignore_file.write(content)
+    return request_sandbox
+
+
+def discard_request_sandbox(request_sandbox, parent_sandbox_dir):
+    """Move a used request sandbox into a date-stamped .trash subdir (no rm; RULE_07)."""
+    if not request_sandbox or not os.path.isdir(request_sandbox):
+        return
+    trash_dir = os.path.join(parent_sandbox_dir, ".trash", datetime.now().strftime("%Y%m%d"))
+    os.makedirs(trash_dir, mode=0o700, exist_ok=True)
+    trashed = os.path.join(trash_dir, os.path.basename(request_sandbox))
+    try:
+        os.replace(request_sandbox, trashed)
+    except OSError as move_error:
+        logger.warning("discard_request_sandbox: failed to move %s: %s", request_sandbox, move_error)
+
+
 def run_search(prompt, model, output_dir, timeout, request_id=None, environment=None, sandbox_dir=None, script_path=None):
     """Run Gemini web search and return OpenAI-format result.
 
@@ -350,13 +374,18 @@ def run_search(prompt, model, output_dir, timeout, request_id=None, environment=
     raw_json_path = os.path.join(output_dir, f"gemini_raw_{request_id}.json")
     grounding_json_path = os.path.join(output_dir, f"gemini_grounding_{request_id}.json")
 
-    raw_text, activity_log_path = call_gemini(
-        prompt, model, output_dir, timeout,
-        environment if environment is not None else os.environ,
-        sandbox_dir if sandbox_dir is not None else GEMINI_SANDBOX_DIR,
-        script_path if script_path is not None else GEMINI_SCRIPT_PATH,
-        request_id,
-    )
+    parent_sandbox = sandbox_dir if sandbox_dir is not None else GEMINI_SANDBOX_DIR
+    request_sandbox = make_request_sandbox(parent_sandbox, request_id, ignore_pattern={".geminiignore": "*\n"})
+    try:
+        raw_text, activity_log_path = call_gemini(
+            prompt, model, output_dir, timeout,
+            environment if environment is not None else os.environ,
+            request_sandbox,
+            script_path if script_path is not None else GEMINI_SCRIPT_PATH,
+            request_id,
+        )
+    finally:
+        discard_request_sandbox(request_sandbox, parent_sandbox)
     stream_events = parse_stream_events(raw_text)
     with open(raw_json_path, "w") as output_file:
         json.dump(stream_events, output_file, indent=2)

@@ -103,6 +103,26 @@ def discard_kimi_config_file(config_path, output_dir):
 REDACT_VALUE_FLAGS = {"-p", "--prompt", "-c", "--command", "--config", "--config-file"}
 
 
+def make_request_sandbox(parent_sandbox_dir, request_id):
+    """Create a per-request subdir under parent_sandbox_dir with mode 0o700."""
+    request_sandbox = os.path.join(parent_sandbox_dir, request_id)
+    os.makedirs(request_sandbox, mode=0o700, exist_ok=True)
+    return request_sandbox
+
+
+def discard_request_sandbox(request_sandbox, parent_sandbox_dir):
+    """Move a used request sandbox into a date-stamped .trash subdir (no rm; RULE_07)."""
+    if not request_sandbox or not os.path.isdir(request_sandbox):
+        return
+    trash_dir = os.path.join(parent_sandbox_dir, ".trash", datetime.now().strftime("%Y%m%d"))
+    os.makedirs(trash_dir, mode=0o700, exist_ok=True)
+    trashed = os.path.join(trash_dir, os.path.basename(request_sandbox))
+    try:
+        os.replace(request_sandbox, trashed)
+    except OSError as move_error:
+        logger.warning("discard_request_sandbox: failed to move %s: %s", request_sandbox, move_error)
+
+
 def redact_argv_for_logging(kimi_arguments):
     """Replace values of -p / -c / --config with `<redacted>` for safe logging (api keys + prompts)."""
     redacted = []
@@ -186,11 +206,15 @@ def run_search(prompt, model, output_dir, timeout, request_id=None, environment=
     stderr_log_path = os.path.join(output_dir, f"kimi_stderr_{request_id}.log")
 
     resolved_environment = environment if environment is not None else os.environ
-    resolved_sandbox_dir = sandbox_dir if sandbox_dir is not None else KIMI_SANDBOX_DIR
+    parent_sandbox = sandbox_dir if sandbox_dir is not None else KIMI_SANDBOX_DIR
     resolved_api_key = api_key if api_key is not None else os.getenv("KIMI_API_KEY", "").strip()
-    raw_text = call_kimi(prompt, model, timeout, stderr_log_path,
-                         resolved_sandbox_dir, resolved_api_key, resolved_environment,
-                         output_dir, request_id)
+    request_sandbox = make_request_sandbox(parent_sandbox, request_id)
+    try:
+        raw_text = call_kimi(prompt, model, timeout, stderr_log_path,
+                             request_sandbox, resolved_api_key, resolved_environment,
+                             output_dir, request_id)
+    finally:
+        discard_request_sandbox(request_sandbox, parent_sandbox)
     stream_events = parse_stream_events(raw_text)
     with open(raw_jsonl_path, "w") as output_file:
         json.dump(stream_events, output_file, indent=2)
