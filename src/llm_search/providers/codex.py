@@ -17,7 +17,7 @@ from datetime import datetime
 
 import sh
 
-from llm_search.config import CODEX_DEFAULT_MODEL, CODEX_DEFAULT_OUTPUT_DIR
+from llm_search.config import CODEX_DEFAULT_MODEL, CODEX_DEFAULT_OUTPUT_DIR, PROVIDER_DEFAULTS
 from llm_search.prompts import load_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -161,6 +161,30 @@ def extract_model_response(events):
     return last_message
 
 
+def detect_provider_failure(events, model_response):
+    """Return an error message if the Codex run failed, else None.
+
+    Codex emits a `turn.failed` event when the upstream API rejects the call
+    (e.g. unknown model, auth failure). It can also emit `error` events with
+    a "stream disconnected" message and produce no agent_message — leaving
+    model_response empty. Both cases used to surface as HTTP-200 with empty
+    or auth-error content; now they raise so server.py returns 500.
+    """
+    last_failure = None
+    for event in events:
+        event_type = event.get("type", "")
+        if event_type == "turn.failed":
+            error_message = event.get("error", {}).get("message") or "<turn.failed with no message>"
+            last_failure = error_message
+        elif event_type == "error":
+            last_failure = event.get("message") or "<codex error event with no message>"
+    if last_failure:
+        return last_failure
+    if not model_response:
+        return "codex returned empty agent_message (no turn.failed, but no content)"
+    return None
+
+
 def extract_markdown_link_annotations(model_text):
     """Extract url_citation annotations from markdown links and bare URLs in the model response."""
     annotations = [
@@ -280,6 +304,12 @@ def run_search(prompt, model, output_dir, timeout):
         search_queries = extract_search_queries_from_jsonl(events)
 
     model_response = extract_model_response(events)
+
+    failure_message = detect_provider_failure(events, model_response)
+    if failure_message:
+        logger.error("Codex run failed: %s", failure_message[:240])
+        raise RuntimeError(f"codex provider failed: {failure_message}")
+
     openai_output = build_openai_format(search_queries, model_response, native_annotations)
 
     with open(search_json_path, "w") as output_file:
@@ -295,7 +325,7 @@ def build_argument_parser():
     parser.add_argument("prompt", help="The prompt to send to Codex")
     parser.add_argument("-m", "--model", default=CODEX_DEFAULT_MODEL)
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose debug logging")
-    parser.add_argument("--timeout", type=int, default=120, help="Timeout in seconds")
+    parser.add_argument("--timeout", type=int, default=PROVIDER_DEFAULTS["codex"]["timeout"], help="Timeout in seconds")
     parser.add_argument("--raw-dir", default=CODEX_DEFAULT_OUTPUT_DIR, help="Directory for output files")
     return parser
 

@@ -16,7 +16,7 @@ from datetime import datetime
 
 import sh
 
-from llm_search.config import CLAUDE_ALLOWED_TOOLS, CLAUDE_DEFAULT_MODEL, CLAUDE_DEFAULT_OUTPUT_DIR
+from llm_search.config import CLAUDE_ALLOWED_TOOLS, CLAUDE_DEFAULT_MODEL, CLAUDE_DEFAULT_OUTPUT_DIR, PROVIDER_DEFAULTS
 from llm_search.prompts import load_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -147,6 +147,22 @@ def extract_model_response(stream_events):
             if content_block.get("type") == "text":
                 response_parts.append(content_block["text"])
     return "\n".join(response_parts) if response_parts else ""
+
+
+def detect_provider_failure(stream_events):
+    """Return an error message if the Claude run failed, else None.
+
+    Claude Code emits a `result` event with `is_error: True` and the failure
+    text in the `result` field on auth failures, rate limits, and other CLI
+    errors. Without this check the failure message gets passed through as
+    if it were the model's answer.
+    """
+    for event in stream_events:
+        if event.get("type") != "result":
+            continue
+        if event.get("is_error"):
+            return event.get("result", "<unknown claude error>")
+    return None
 
 
 def extract_markdown_link_annotations(model_text, search_sources):
@@ -286,6 +302,11 @@ def run_search(prompt, model, output_dir, timeout):
     with open(raw_json_path, "w") as output_file:
         json.dump(stream_events, output_file, indent=2)
 
+    failure_message = detect_provider_failure(stream_events)
+    if failure_message:
+        logger.error("Claude reported is_error=True: %s", failure_message[:240])
+        raise RuntimeError(f"claude provider failed: {failure_message}")
+
     search_queries = extract_search_queries(stream_events)
     search_sources = extract_search_results(stream_events)
     model_response = extract_model_response(stream_events)
@@ -304,7 +325,7 @@ def build_argument_parser():
     parser.add_argument("prompt", help="The prompt to send to Claude Code")
     parser.add_argument("-m", "--model", default=CLAUDE_DEFAULT_MODEL)
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose debug logging")
-    parser.add_argument("--timeout", type=int, default=120, help="Timeout in seconds")
+    parser.add_argument("--timeout", type=int, default=PROVIDER_DEFAULTS["claude"]["timeout"], help="Timeout in seconds")
     parser.add_argument("--raw-dir", default=CLAUDE_DEFAULT_OUTPUT_DIR, help="Directory for output files")
     return parser
 

@@ -17,10 +17,10 @@ HOST = os.getenv("LLM_SEARCH_HOST", "0.0.0.0")
 
 # --- Provider defaults ---
 PROVIDER_DEFAULTS = {
-    "claude": {"model": "haiku", "timeout": 180},
-    "codex": {"model": "gpt-5.5", "timeout": 180},
-    "gemini": {"model": "gemini-3-flash-preview", "timeout": 180},
-    "kimi": {"model": "", "timeout": 300},
+    "claude": {"model": "haiku", "timeout": 290},
+    "codex": {"model": "gpt-5.5", "timeout": 290},
+    "gemini": {"model": "gemini-3-flash-preview", "timeout": 290},
+    "kimi": {"model": "", "timeout": 290},
 }
 
 # --- Claude ---
