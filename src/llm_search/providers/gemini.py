@@ -357,6 +357,7 @@ def build_argument_parser():
     parser.add_argument("prompt", help="The prompt to send to Gemini")
     parser.add_argument("-m", "--model", default=GEMINI_DEFAULT_MODEL)
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose debug logging")
+    parser.add_argument("--timeout", type=int, default=PROVIDER_DEFAULTS["gemini"]["timeout"], help="Timeout in seconds")
     parser.add_argument("--no-resolve", action="store_true", help="Skip resolving redirect URIs")
     parser.add_argument("--raw-dir", default=GEMINI_DEFAULT_OUTPUT_DIR, help="Directory for output files")
     return parser
@@ -376,7 +377,7 @@ def main():
 
     logger.info("Calling Gemini model=%s", args.model)
     raw_text, activity_log_path = call_gemini(
-        args.prompt, args.model, args.raw_dir, PROVIDER_DEFAULTS["gemini"]["timeout"],
+        args.prompt, args.model, args.raw_dir, args.timeout,
         os.environ, GEMINI_SANDBOX_DIR, GEMINI_SCRIPT_PATH,
     )
 
