@@ -154,7 +154,7 @@ def parse_activity_log(activity_log_path):
     """Extract raw tool calls and grounding metadata from activity log."""
     logger.debug("parse_activity_log(%s)", activity_log_path)
     entries = []
-    with open(activity_log_path) as activity_file:
+    with open(activity_log_path, encoding="utf-8", errors="replace") as activity_file:
         for line in activity_file:
             line = line.strip()
             if line:
