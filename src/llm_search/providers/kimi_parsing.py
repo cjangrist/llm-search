@@ -261,13 +261,12 @@ def extract_model_response(stream_events):
 
 def extract_markdown_link_annotations(model_text, search_sources):
     """Extract url_citation annotations from markdown links [title](url) in the model response."""
+    from llm_search.response import find_markdown_links
     search_url_set = {source["url"] for source in search_sources}
     search_title_map = {source["url"]: source["title"] for source in search_sources}
     annotations = []
 
-    for match in re.finditer(r"\[([^\]]+)\]\(([^)]+)\)", model_text):
-        link_url = match.group(2)
-        link_title = match.group(1)
+    for match, link_title, link_url in find_markdown_links(model_text):
         matched_url = link_url if link_url in search_url_set else next(
             (source_url for source_url in search_url_set if link_url in source_url or source_url in link_url),
             link_url,

@@ -4,8 +4,25 @@ Converts provider-internal Responses API format into the external
 Chat Completions format with nested url_citation annotations.
 """
 
+import re
 import time
 import uuid
+
+
+MARKDOWN_LINK_PATTERN = re.compile(
+    # [link text]( url-with-balanced-parens )
+    # Allows one level of balanced parens inside the URL so that Wikipedia / MDN URLs
+    # like https://en.wikipedia.org/wiki/Python_(programming_language) round-trip
+    # correctly. Lazy URL match plus an optional "(...)..." tail catches the common case
+    # without back-tracking into the link-text bracket.
+    r"\[([^\]]+)\]\(([^()\s]+(?:\([^()]*\)[^()\s]*)?)\)"
+)
+
+
+def find_markdown_links(model_text):
+    """Yield (match, link_text, url) for every [text](url) link, with balanced-paren URL handling."""
+    for match in MARKDOWN_LINK_PATTERN.finditer(model_text):
+        yield match, match.group(1), match.group(2)
 
 
 def extract_annotations_from_provider_output(provider_output):

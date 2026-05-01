@@ -18,6 +18,7 @@ import sh
 
 from llm_search.config import CLAUDE_ALLOWED_TOOLS, CLAUDE_DEFAULT_MODEL, CLAUDE_DEFAULT_OUTPUT_DIR, PROVIDER_DEFAULTS
 from llm_search.prompts import load_system_prompt
+from llm_search.response import find_markdown_links
 
 logger = logging.getLogger(__name__)
 
@@ -175,9 +176,7 @@ def extract_markdown_link_annotations(model_text, search_sources):
     search_title_map = {source["url"]: source["title"] for source in search_sources}
     annotations = []
 
-    for match in re.finditer(r'\[([^\]]+)\]\(([^)]+)\)', model_text):
-        link_url = match.group(2)
-        link_title = match.group(1)
+    for match, link_title, link_url in find_markdown_links(model_text):
         start_index = match.start()
         end_index = match.end()
 

@@ -20,6 +20,7 @@ import sh
 
 from llm_search.config import CODEX_DEFAULT_MODEL, CODEX_DEFAULT_OUTPUT_DIR, PROVIDER_DEFAULTS
 from llm_search.prompts import load_system_prompt
+from llm_search.response import find_markdown_links
 
 logger = logging.getLogger(__name__)
 
@@ -193,10 +194,10 @@ def extract_markdown_link_annotations(model_text):
             "type": "url_citation",
             "start_index": match.start(),
             "end_index": match.end(),
-            "url": match.group(2),
-            "title": match.group(1),
+            "url": link_url,
+            "title": link_title,
         }
-        for match in re.finditer(r'\[([^\]]+)\]\(([^)]+)\)', model_text)
+        for match, link_title, link_url in find_markdown_links(model_text)
     ]
 
     linked_spans = {(annotation["start_index"], annotation["end_index"]) for annotation in annotations}
