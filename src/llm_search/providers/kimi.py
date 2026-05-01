@@ -67,24 +67,39 @@ def build_kimi_arguments(model, augmented_prompt, sandbox_dir, config_file_path)
     return kimi_arguments
 
 
-def write_kimi_config_file(api_key, output_dir, request_id):
-    """Render the api-key TOML to a per-request file with mode 0o600. Returns the path or None.
+def expected_kimi_config_path(api_key, output_dir, request_id):
+    """Return the path the kimi config WILL be written to (or None when api_key is empty).
 
-    Uses str.replace (not .format) so api keys containing literal `{` or `}` don't blow up.
+    Caller computes this BEFORE write_kimi_config_file actually creates the file, so the
+    cleanup in `finally:` can always discard whatever was (partially) written — even if
+    the write fails mid-flight or open() raises in the next setup step.
     """
     if not api_key:
         return None
-    config_path = os.path.join(output_dir, f"kimi_apiconfig_{request_id}.toml")
+    return os.path.join(output_dir, f"kimi_apiconfig_{request_id}.toml")
+
+
+def write_kimi_config_file(api_key, config_path):
+    """Render the api-key TOML to `config_path` with mode 0o600.
+
+    Uses str.replace (not .format) so api keys containing literal `{` or `}` don't blow up.
+    On any failure (mid-write, fd-leak), the partially-written file is left at config_path
+    so the caller's cleanup can move it to trash unchanged.
+    """
+    if not api_key or not config_path:
+        return
     rendered = API_KEY_CONFIG_TEMPLATE.replace("{api_key}", api_key)
     fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
         with os.fdopen(fd, "w") as config_file:
             config_file.write(rendered)
-    except Exception:
-        os.close(fd) if not config_file.closed else None  # type: ignore[name-defined]
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
         raise
     logger.info("write_kimi_config_file: wrote %s (mode 0o600, %d chars)", config_path, len(rendered))
-    return config_path
 
 
 def discard_kimi_config_file(config_path, output_dir):
@@ -163,26 +178,34 @@ def call_kimi(prompt, model, timeout_seconds, stderr_log_path, sandbox_dir, api_
                 len(system_prompt), len(prompt), len(augmented_prompt))
 
     os.makedirs(sandbox_dir, exist_ok=True)
-    config_file_path = write_kimi_config_file(api_key, output_dir, request_id)
-    if config_file_path:
-        logger.info("call_kimi: api_key supplied — using --config-file %s", config_file_path)
-    else:
-        logger.info("call_kimi: no api_key supplied, falling back to OAuth config")
-
-    kimi_arguments = build_kimi_arguments(model, augmented_prompt, sandbox_dir, config_file_path)
-    logger.info("Running: kimi %s (prompt=%d chars)", " ".join(redact_argv_for_logging(kimi_arguments)), len(augmented_prompt))
-
-    stderr_file = open(stderr_log_path, "w") if stderr_log_path else None
+    # Compute the path BEFORE any I/O so the outer finally can always trash it,
+    # even if write_kimi_config_file or open(stderr_log_path) raises mid-setup.
+    config_file_path = expected_kimi_config_path(api_key, output_dir, request_id)
     try:
-        raw_output = sh.kimi(
-            *kimi_arguments,
-            _env=dict(environment), _ok_code=[0, 1], _encoding="utf-8",
-            _err=stderr_file, _timeout=timeout_seconds,
-            _new_session=True, _done=kill_subprocess_tree_on_done(),
-        )
+        write_kimi_config_file(api_key, config_file_path)
+        if config_file_path:
+            logger.info("call_kimi: api_key supplied — using --config-file %s", config_file_path)
+        else:
+            logger.info("call_kimi: no api_key supplied, falling back to OAuth config")
+
+        kimi_arguments = build_kimi_arguments(model, augmented_prompt, sandbox_dir, config_file_path)
+        logger.info("Running: kimi %s (prompt=%d chars)", " ".join(redact_argv_for_logging(kimi_arguments)), len(augmented_prompt))
+
+        stderr_file = open(stderr_log_path, "w") if stderr_log_path else None
+        try:
+            raw_output = sh.kimi(
+                *kimi_arguments,
+                _env=dict(environment), _ok_code=[0, 1], _encoding="utf-8",
+                _err=stderr_file, _timeout=timeout_seconds,
+                _new_session=True, _done=kill_subprocess_tree_on_done(),
+            )
+        finally:
+            if stderr_file is not None:
+                try:
+                    stderr_file.close()
+                except OSError as close_error:
+                    logger.warning("call_kimi: stderr_file.close() failed: %s", close_error)
     finally:
-        if stderr_file is not None:
-            stderr_file.close()
         discard_kimi_config_file(config_file_path, output_dir)
 
     raw_text = str(raw_output)
