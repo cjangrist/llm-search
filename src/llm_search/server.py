@@ -56,7 +56,13 @@ def parse_model_field(model_string):
 
 
 PROVIDER_ARTEFACT_TEMPLATES = {
-    "codex": ["codex_raw_{rid}.jsonl", "codex_trace_{rid}.log", "codex_search_{rid}.json"],
+    # codex_trace_*.log is intentionally NOT embedded — it contains every HTTP
+    # request/response from RUST_LOG=codex_api=trace, including the
+    # `Authorization: Bearer …` header. Persisting it into the bind-mounted
+    # request log would leak the token to the host. The trace file still lives
+    # inside the container at /tmp/llm-search/ for parse_trace_log_sse_events
+    # to read during the request — it just doesn't escape to the host.
+    "codex": ["codex_raw_{rid}.jsonl", "codex_search_{rid}.json"],
     "claude": ["claude_raw_{rid}.json", "claude_search_{rid}.json"],
     "gemini": ["gemini_raw_{rid}.json", "gemini_grounding_{rid}.json", "gemini_activity_{rid}.jsonl"],
     "kimi": ["kimi_raw_{rid}.json", "kimi_search_{rid}.json", "kimi_stderr_{rid}.log"],
