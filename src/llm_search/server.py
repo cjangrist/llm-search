@@ -89,13 +89,30 @@ def read_provider_files(provider, output_dir, request_id):
     return file_contents
 
 
+LOG_PROMPTS_ENABLED = os.getenv("LLM_SEARCH_LOG_PROMPTS", "0").lower() in {"1", "true", "yes"}
+
+
+def summarize_for_log(value):
+    """Replace large content blobs with `<{N} chars>` markers for the metadata-only log shape."""
+    if isinstance(value, str):
+        return f"<{len(value)} chars>"
+    if isinstance(value, list):
+        return [summarize_for_log(item) for item in value]
+    if isinstance(value, dict):
+        return {key: summarize_for_log(item) for key, item in value.items()}
+    return value
+
+
 def write_request_log(provider, model_name, prompt, request_body, response_body, latency_seconds, error, output_dir, started_at, request_id):
-    """Write a unified JSON request/response log to LOGS_DIR."""
+    """Write a unified JSON request/response log to LOGS_DIR.
+
+    By default the log is metadata-only (lengths + counts) — full prompt/response
+    bodies are persisted only when LLM_SEARCH_LOG_PROMPTS=1, since the log dir is
+    typically bind-mounted to the host and full bodies are PII.
+    """
     os.makedirs(LOGS_DIR, exist_ok=True)
     timestamp_str = datetime.fromtimestamp(started_at, tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
     log_path = os.path.join(LOGS_DIR, f"request_{provider}_{timestamp_str}_{request_id}.json")
-
-    provider_files = read_provider_files(provider, output_dir, request_id)
 
     log_entry = {
         "timestamp_utc": datetime.fromtimestamp(started_at, tz=timezone.utc).isoformat(),
@@ -103,11 +120,16 @@ def write_request_log(provider, model_name, prompt, request_body, response_body,
         "provider": provider,
         "model": model_name,
         "latency_seconds": round(latency_seconds, 3),
-        "request": request_body,
-        "response": response_body,
         "error": error,
-        "provider_files": provider_files,
     }
+    if LOG_PROMPTS_ENABLED:
+        log_entry["request"] = request_body
+        log_entry["response"] = response_body
+        log_entry["provider_files"] = read_provider_files(provider, output_dir, request_id)
+    else:
+        log_entry["prompt_chars"] = len(prompt) if prompt else 0
+        log_entry["response_summary"] = summarize_for_log(response_body) if response_body else None
+        log_entry["provider_files_listed"] = sorted(read_provider_files(provider, output_dir, request_id).keys())
 
     with open(log_path, "w") as log_file:
         json.dump(log_entry, log_file, indent=2)
