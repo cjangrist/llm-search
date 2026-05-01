@@ -179,8 +179,15 @@ def detect_provider_failure(events, model_response):
     for event in events:
         event_type = event.get("type", "")
         if event_type == "turn.failed":
-            error_message = event.get("error", {}).get("message") or "<turn.failed with no message>"
-            last_failure = error_message
+            # event["error"] can be a dict, None, or (rarely) a string. Defensive: only
+            # call .get on actual dicts.
+            error_field = event.get("error")
+            error_field_dict = error_field if isinstance(error_field, dict) else {}
+            last_failure = (
+                error_field_dict.get("message")
+                or (error_field if isinstance(error_field, str) else None)
+                or "<turn.failed with no message>"
+            )
         elif event_type == "error":
             last_failure = event.get("message") or "<codex error event with no message>"
     if last_failure:

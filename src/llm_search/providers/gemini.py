@@ -401,8 +401,15 @@ def detect_provider_failure(stream_events, grounding_blocks, model_response):
     for event in stream_events:
         event_type = (event.get("type") or "").lower()
         if event_type in {"error", "turn.failed"}:
-            error_field = event.get("error") or {}
-            return event.get("message") or error_field.get("message") or "<gemini error event with no message>"
+            # event["error"] can be a dict, None, or string. Coerce to dict only when it IS one.
+            error_field = event.get("error")
+            error_field_dict = error_field if isinstance(error_field, dict) else {}
+            return (
+                event.get("message")
+                or error_field_dict.get("message")
+                or (error_field if isinstance(error_field, str) else None)
+                or "<gemini error event with no message>"
+            )
         if event.get("is_error"):
             return event.get("error") or event.get("content") or "<gemini event flagged is_error=true>"
     # Filter out "thought-only" blocks (text=None) before deciding the response is real.
