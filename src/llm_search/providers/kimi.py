@@ -25,6 +25,7 @@ from llm_search.providers.kimi_parsing import (
     extract_search_sources,
     parse_stream_events,
 )
+from llm_search.providers.subprocess_safety import kill_subprocess_tree, make_done_callback
 
 logger = logging.getLogger(__name__)
 
@@ -165,15 +166,18 @@ def call_kimi(prompt, model, timeout_seconds, stderr_log_path, sandbox_dir, api_
     logger.info("Running: kimi %s (prompt=%d chars)", " ".join(redact_argv_for_logging(kimi_arguments)), len(augmented_prompt))
 
     stderr_file = open(stderr_log_path, "w") if stderr_log_path else None
+    captured_pid = [None]
     try:
         raw_output = sh.kimi(
             *kimi_arguments,
             _env=dict(environment), _ok_code=[0, 1], _encoding="utf-8",
             _err=stderr_file, _timeout=timeout_seconds,
+            _new_session=True, _done=make_done_callback(captured_pid),
         )
     finally:
         if stderr_file is not None:
             stderr_file.close()
+        kill_subprocess_tree(captured_pid[0])
         discard_kimi_config_file(config_file_path, output_dir)
 
     raw_text = str(raw_output)

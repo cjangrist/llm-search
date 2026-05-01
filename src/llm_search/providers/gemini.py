@@ -25,6 +25,7 @@ from llm_search.config import (
     VERTEX_REDIRECT_PREFIX,
 )
 from llm_search.prompts import load_system_prompt
+from llm_search.providers.subprocess_safety import kill_subprocess_tree, make_done_callback
 
 logger = logging.getLogger(__name__)
 
@@ -148,21 +149,31 @@ def invoke_gemini_via_bun(model, augmented_prompt, gemini_environment, sandbox_d
     """Run gemini-cli under bun (faster cold-start than node)."""
     gemini_script = find_gemini_script(script_path)
     logger.debug("Running gemini via bun: %s", gemini_script)
-    return sh.bun(
-        gemini_script, "-m", model, "-p", augmented_prompt, *GEMINI_CLI_FLAGS,
-        _env=gemini_environment, _cwd=sandbox_dir,
-        _ok_code=[0, 1], _encoding="utf-8", _timeout=timeout_seconds,
-    )
+    captured_pid = [None]
+    try:
+        return sh.bun(
+            gemini_script, "-m", model, "-p", augmented_prompt, *GEMINI_CLI_FLAGS,
+            _env=gemini_environment, _cwd=sandbox_dir,
+            _ok_code=[0, 1], _encoding="utf-8", _timeout=timeout_seconds,
+            _new_session=True, _done=make_done_callback(captured_pid),
+        )
+    finally:
+        kill_subprocess_tree(captured_pid[0])
 
 
 def invoke_gemini_via_node(model, augmented_prompt, gemini_environment, sandbox_dir, timeout_seconds, script_path):
     """Run gemini-cli under node (fallback when bun isn't on PATH). script_path unused on this branch."""
     logger.debug("bun not found, falling back to node runtime")
-    return sh.gemini(
-        "-m", model, "-p", augmented_prompt, *GEMINI_CLI_FLAGS,
-        _env=gemini_environment, _cwd=sandbox_dir,
-        _ok_code=[0, 1], _encoding="utf-8", _timeout=timeout_seconds,
-    )
+    captured_pid = [None]
+    try:
+        return sh.gemini(
+            "-m", model, "-p", augmented_prompt, *GEMINI_CLI_FLAGS,
+            _env=gemini_environment, _cwd=sandbox_dir,
+            _ok_code=[0, 1], _encoding="utf-8", _timeout=timeout_seconds,
+            _new_session=True, _done=make_done_callback(captured_pid),
+        )
+    finally:
+        kill_subprocess_tree(captured_pid[0])
 
 
 def call_gemini(prompt, model, output_dir, timeout_seconds, environment, sandbox_dir, script_path, request_id=None):

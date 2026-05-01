@@ -20,6 +20,7 @@ import sh
 
 from llm_search.config import CODEX_DEFAULT_MODEL, CODEX_DEFAULT_OUTPUT_DIR, PROVIDER_DEFAULTS
 from llm_search.prompts import load_system_prompt
+from llm_search.providers.subprocess_safety import kill_subprocess_tree, make_done_callback
 from llm_search.response import find_markdown_links
 
 logger = logging.getLogger(__name__)
@@ -35,24 +36,30 @@ def call_codex(prompt, model, timeout_seconds, trace_log_path, environment):
     augmented_prompt = f'CRITICAL RULE-> using web_search answer: "{prompt}"'
 
     logger.info("Running: codex exec --json -m %s (with RUST_LOG=codex_api=trace) ...", model)
-    with open(trace_log_path, "w") as trace_file:
-        raw_output = sh.codex(
-            "-c", "service_tier=fast",
-            "exec",
-            "--json",
-            "-m", model,
-            "--config", "model_reasoning_effort=medium",
-            "--config", f"instructions={system_prompt}",
-            "--sandbox", "read-only",
-            "--skip-git-repo-check",
-            "--ephemeral",
-            augmented_prompt,
-            _env=trace_environment,
-            _ok_code=[0, 1],
-            _encoding="utf-8",
-            _err=trace_file,
-            _timeout=timeout_seconds,
-        )
+    captured_pid = [None]
+    try:
+        with open(trace_log_path, "w") as trace_file:
+            raw_output = sh.codex(
+                "-c", "service_tier=fast",
+                "exec",
+                "--json",
+                "-m", model,
+                "--config", "model_reasoning_effort=medium",
+                "--config", f"instructions={system_prompt}",
+                "--sandbox", "read-only",
+                "--skip-git-repo-check",
+                "--ephemeral",
+                augmented_prompt,
+                _env=trace_environment,
+                _ok_code=[0, 1],
+                _encoding="utf-8",
+                _err=trace_file,
+                _timeout=timeout_seconds,
+                _new_session=True,
+                _done=make_done_callback(captured_pid),
+            )
+    finally:
+        kill_subprocess_tree(captured_pid[0])
 
     raw_text = str(raw_output)
     logger.debug("call_codex returned %d chars on stdout", len(raw_text))
