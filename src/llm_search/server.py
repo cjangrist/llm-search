@@ -141,6 +141,24 @@ def make_error_response(message, status_code, param=None):
     }), status_code
 
 
+MAX_TIMEOUT_SECONDS = 290
+
+
+def validate_request_body(body):
+    """Validate the parsed JSON body. Returns (valid_dict, error_response) — exactly one is non-None."""
+    if not isinstance(body, dict):
+        return None, make_error_response("request body must be a JSON object", 400, None)
+    messages = body.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return None, make_error_response("messages is required and must be a non-empty array", 400, "messages")
+    if not all(isinstance(message, dict) for message in messages):
+        return None, make_error_response("each entry in messages must be a JSON object", 400, "messages")
+    raw_timeout = body.get("timeout")
+    if raw_timeout is not None and (not isinstance(raw_timeout, int) or isinstance(raw_timeout, bool) or not 1 <= raw_timeout <= MAX_TIMEOUT_SECONDS):
+        return None, make_error_response(f"timeout must be an integer in [1, {MAX_TIMEOUT_SECONDS}] seconds", 400, "timeout")
+    return body, None
+
+
 def handle_chat_completions():
     """OpenAI-compatible Chat Completions endpoint with web search grounding.
 
@@ -149,18 +167,17 @@ def handle_chat_completions():
         messages (list): OpenAI-format messages array
         timeout (int, optional): CLI timeout in seconds
     """
-    body = request.get_json(force=True)
+    body = request.get_json(silent=True, force=True)
+    body, error_response = validate_request_body(body)
+    if error_response is not None:
+        return error_response
 
     parsed, parse_error = parse_model_field(body.get("model"))
     if parse_error:
         return make_error_response(parse_error, 400, "model")
     provider, model_name = parsed
 
-    messages = body.get("messages", [])
-    if not messages:
-        return make_error_response("messages is required and must be a non-empty array", 400, "messages")
-
-    prompt = extract_prompt_from_messages(messages)
+    prompt = extract_prompt_from_messages(body["messages"])
     if not prompt:
         return make_error_response("messages must contain at least one user message with content", 400, "messages")
 
@@ -180,12 +197,15 @@ def handle_chat_completions():
     except Exception as search_error:
         runtime_error = str(search_error)
         logger.error("Chat completion failed (request_id=%s): %s\n%s", request_id, search_error, traceback.format_exc())
-        return make_error_response(str(search_error), 500)
+        return make_error_response(f"internal error (request_id={request_id})", 500)
     finally:
         latency_seconds = time.time() - started_at
         logger.info("Completed in %.1fs (request_id=%s provider=%s model=%s)", latency_seconds, request_id, provider, model_name)
-        write_request_log(provider, model_name, prompt, body, response_body,
-                          latency_seconds, runtime_error, OUTPUT_DIR, started_at, request_id)
+        try:
+            write_request_log(provider, model_name, prompt, body, response_body,
+                              latency_seconds, runtime_error, OUTPUT_DIR, started_at, request_id)
+        except Exception as log_error:
+            logger.error("write_request_log failed (request_id=%s): %s", request_id, log_error)
 
 
 def handle_health():
