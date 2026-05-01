@@ -1,12 +1,13 @@
-FROM node:22-bookworm
+FROM node:22-bookworm@sha256:9059d9d7db987b86299e052ff6630cd95e5a770336967c21110e53289a877433
 
 # System deps (includes ripgrep to skip gemini-cli's slow auto-download)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv curl git ca-certificates gosu ripgrep unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Bun for faster gemini CLI runtime (~2x node startup speedup)
-RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash
+# Install Bun for faster gemini CLI runtime — pinned version (the install script honors BUN_VERSION)
+ARG BUN_VERSION=1.3.13
+RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash -s -- bun-v${BUN_VERSION}
 
 # Install CLIs globally via npm (pinned to match host versions as of 2026-04-24)
 ARG CLAUDE_CODE_VERSION=2.1.119
@@ -26,8 +27,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install uv (needed because kimi-cli requires Python >=3.12 but base image ships 3.11)
-RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh
+# Install uv — pinned version (kimi-cli requires Python >=3.12 but base image ships 3.11)
+ARG UV_VERSION=0.11.8
+RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh
 
 # Install Kimi CLI (MoonshotAI) via uv with its own managed Python,
 # into world-readable paths so the llmsearch user can run it
