@@ -100,18 +100,45 @@ def resolve_all_uris(uri_list):
     return resolved_map
 
 
+def safe_which(binary_name):
+    """Return the absolute path to `binary_name` on PATH, or None if not found.
+
+    sh.which raises sh.ErrorReturnCode_1 on miss instead of returning None — wrap
+    so callers can fall back cleanly without try/except scattered through the call sites.
+    """
+    try:
+        path = str(sh.which(binary_name)).strip()
+    except sh.ErrorReturnCode:
+        return None
+    return path or None
+
+
 def find_gemini_script(script_path_override):
     """Locate the gemini CLI entry point for running under bun.
 
     Preference order: explicit script_path_override (config-supplied), else resolve
-    the `gemini` binary from PATH, dereferencing symlinks (npm shims).
+    the `gemini` binary from PATH, dereferencing symlinks (npm shims). Returns None
+    if no gemini binary is on PATH and no override is provided.
     """
     if script_path_override and os.path.isfile(script_path_override):
         return script_path_override
-    gemini_bin = str(sh.which("gemini")).strip()
+    gemini_bin = safe_which("gemini")
+    if gemini_bin is None:
+        return None
     if os.path.islink(gemini_bin):
         return os.path.realpath(gemini_bin)
     return gemini_bin
+
+
+_BUN_AVAILABLE = None
+
+
+def is_bun_available():
+    """Cached check for `bun` on PATH so we don't fork+exec `which` per request."""
+    global _BUN_AVAILABLE
+    if _BUN_AVAILABLE is None:
+        _BUN_AVAILABLE = safe_which("bun") is not None
+    return _BUN_AVAILABLE
 
 
 GEMINI_CLI_FLAGS = ("-o", "stream-json", "--yolo", "--skip-trust")
@@ -153,7 +180,7 @@ def call_gemini(prompt, model, output_dir, timeout_seconds, environment, sandbox
 
     os.makedirs(sandbox_dir, exist_ok=True)
 
-    runner = invoke_gemini_via_bun if sh.which("bun") else invoke_gemini_via_node
+    runner = invoke_gemini_via_bun if is_bun_available() else invoke_gemini_via_node
     raw_output = runner(model, augmented_prompt, gemini_environment, sandbox_dir, timeout_seconds, script_path)
 
     raw_text = str(raw_output)
