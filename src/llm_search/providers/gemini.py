@@ -409,11 +409,16 @@ def detect_provider_failure(stream_events, grounding_blocks, model_response):
     for event in stream_events:
         event_type = (event.get("type") or "").lower()
         if event_type in {"error", "turn.failed"}:
-            return event.get("message") or event.get("error", {}).get("message") or "<gemini error event with no message>"
+            error_field = event.get("error") or {}
+            return event.get("message") or error_field.get("message") or "<gemini error event with no message>"
         if event.get("is_error"):
             return event.get("error") or event.get("content") or "<gemini event flagged is_error=true>"
-    if not model_response and not grounding_blocks:
-        return "gemini returned empty response with no grounding (auth/rate-limit/CLI-crash likely)"
+    # Filter out "thought-only" blocks (text=None) before deciding the response is real.
+    # A response made up entirely of thought-only blocks contributes zero text to the client
+    # — same end-user effect as no grounding at all, surface as HTTP 500.
+    blocks_with_text = [block for block in grounding_blocks if block.get("text")]
+    if not model_response and not blocks_with_text:
+        return "gemini returned empty response with no grounding text (auth/rate-limit/CLI-crash likely)"
     return None
 
 
