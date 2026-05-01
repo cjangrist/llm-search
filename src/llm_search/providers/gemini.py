@@ -36,6 +36,14 @@ SYSTEM_PROMPT_FILE_PATH = os.path.join(
 )
 
 
+REDIRECT_PER_URI_TIMEOUT_SECONDS = 5
+REDIRECT_OVERALL_TIMEOUT_SECONDS = 30
+REDIRECT_PARALLELISM = 4
+# Curl exit codes we tolerate silently; anything else gets logged.
+# 0=success, 6=DNS resolve, 7=connect, 28=timeout, 35/56/60=TLS/recv issues.
+CURL_TOLERATED_EXIT_CODES = {0, 6, 7, 28, 35, 52, 56, 60}
+
+
 def resolve_redirect(uri):
     """Follow a Vertex grounding redirect to get the actual URL via curl."""
     if not uri or not uri.startswith(VERTEX_REDIRECT_PREFIX):
@@ -44,28 +52,49 @@ def resolve_redirect(uri):
         result = sh.curl(
             "-sIL", "-o", "/dev/null",
             "-w", "%{url_effective}",
-            "--max-time", "10",
+            "--max-time", str(REDIRECT_PER_URI_TIMEOUT_SECONDS),
             uri,
-            _ok_code=range(256),
+            _ok_code=list(CURL_TOLERATED_EXIT_CODES),
         )
         resolved = str(result).strip()
         return resolved if resolved and resolved != uri else uri
-    except Exception:
+    except sh.ErrorReturnCode as curl_error:
+        logger.warning("resolve_redirect curl unexpected exit %d for %s", curl_error.exit_code, uri[:120])
+        return uri
+    except Exception as resolve_error:
+        logger.warning("resolve_redirect failed for %s: %s", uri[:120], resolve_error)
         return uri
 
 
 def resolve_all_uris(uri_list):
-    """Resolve redirect URIs in parallel."""
+    """Resolve redirect URIs in parallel with a hard overall budget.
+
+    Hung redirects no longer stretch the request by minutes — overall budget is bounded
+    by REDIRECT_OVERALL_TIMEOUT_SECONDS and parallelism is capped at REDIRECT_PARALLELISM
+    so we don't hammer the same redirect host with too many concurrent connections.
+    """
     unique_redirect_uris = list({uri for uri in uri_list if uri and uri.startswith(VERTEX_REDIRECT_PREFIX)})
     if not unique_redirect_uris:
         return {}
     logger.debug("Resolving %d unique redirect URIs", len(unique_redirect_uris))
     resolved_map = {}
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=REDIRECT_PARALLELISM) as executor:
         pending_futures = {executor.submit(resolve_redirect, uri): uri for uri in unique_redirect_uris}
-        for completed_future in as_completed(pending_futures):
-            original_uri = pending_futures[completed_future]
-            resolved_map[original_uri] = completed_future.result()
+        try:
+            for completed_future in as_completed(pending_futures, timeout=REDIRECT_OVERALL_TIMEOUT_SECONDS):
+                original_uri = pending_futures[completed_future]
+                resolved_map[original_uri] = completed_future.result()
+        except TimeoutError:
+            logger.warning(
+                "resolve_all_uris hit overall %ds budget — leaving %d/%d URIs unresolved",
+                REDIRECT_OVERALL_TIMEOUT_SECONDS,
+                len(unique_redirect_uris) - len(resolved_map),
+                len(unique_redirect_uris),
+            )
+            for future, original_uri in pending_futures.items():
+                if original_uri not in resolved_map:
+                    resolved_map.setdefault(original_uri, original_uri)
+                    future.cancel()
     unresolved_count = sum(1 for value in resolved_map.values() if value.startswith(VERTEX_REDIRECT_PREFIX))
     logger.debug("Resolved %d/%d URIs", len(resolved_map) - unresolved_count, len(resolved_map))
     return resolved_map
