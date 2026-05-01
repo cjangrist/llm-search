@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import sys
 import uuid
 from datetime import datetime
 
@@ -374,6 +375,11 @@ def main():
     with open(raw_json_path, "w") as output_file:
         json.dump(stream_events, output_file, indent=2)
     logger.info("Raw stream-json saved to %s (%d events)", raw_json_path, len(stream_events))
+
+    failure_message = detect_provider_failure(stream_events)
+    if failure_message:
+        logger.error("Claude reported is_error=True: %s", failure_message[:240])
+        sys.exit(2)
 
     search_queries = extract_search_queries(stream_events)
     search_sources = extract_search_results(stream_events)

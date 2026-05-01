@@ -10,6 +10,7 @@ import argparse
 import json
 import logging
 import os
+import sys
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -556,13 +557,19 @@ def main():
     search_queries, grounding_blocks = parse_activity_log(activity_log_path)
     logger.debug("Found %d search queries, %d grounding blocks", len(search_queries), len(grounding_blocks))
 
+    model_response = extract_model_response(grounding_blocks, stream_events)
+
+    failure_message = detect_provider_failure(stream_events, grounding_blocks, model_response)
+    if failure_message:
+        logger.error("Gemini run failed: %s", failure_message[:240])
+        sys.exit(2)
+
     openai_output = build_openai_format(search_queries, grounding_blocks, not args.no_resolve)
     with open(grounding_json_path, "w") as output_file:
         json.dump(openai_output, output_file, indent=2)
     logger.info("Grounding data saved to %s", grounding_json_path)
     logger.info("Activity log at %s", activity_log_path)
 
-    model_response = extract_model_response(grounding_blocks, stream_events)
     print(model_response)
 
 

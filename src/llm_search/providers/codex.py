@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import sys
 import uuid
 from datetime import datetime
 
@@ -386,6 +387,11 @@ def main():
     search_queries, native_annotations, model_response = parse_codex_outputs(events, trace_log_path)
     logger.info("Parsed %d queries, %d native annotations, %d response chars",
                 len(search_queries), len(native_annotations), len(model_response))
+
+    failure_message = detect_provider_failure(events, model_response)
+    if failure_message:
+        logger.error("Codex run failed: %s", failure_message[:240])
+        sys.exit(2)
 
     openai_output = build_openai_format(search_queries, model_response, native_annotations)
     with open(search_json_path, "w") as output_file:

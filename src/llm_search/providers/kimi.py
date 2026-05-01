@@ -10,6 +10,7 @@ import argparse
 import json
 import logging
 import os
+import sys
 import uuid
 from datetime import datetime
 
@@ -315,6 +316,11 @@ def main():
     search_sources = extract_search_sources(stream_events)
     model_response = extract_model_response(stream_events)
     logger.info("Found %d search queries, %d sources", len(search_queries), len(search_sources))
+
+    failure_message = detect_provider_failure(stream_events, model_response)
+    if failure_message:
+        logger.error("Kimi run failed: %s", failure_message[:240])
+        sys.exit(2)
 
     openai_output = build_openai_format(search_queries, search_sources, model_response)
     with open(search_json_path, "w") as output_file:
