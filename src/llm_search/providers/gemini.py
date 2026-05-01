@@ -384,12 +384,13 @@ def parse_stream_events(raw_text):
 def extract_model_response(grounding_blocks, stream_events):
     """Get model response text from grounding blocks or stream events.
 
-    Joins ALL non-empty grounding-block texts (matching build_openai_format's join order)
-    so the returned string aligns with the annotation offsets emitted to the client.
+    Mirrors the join order in build_openai_format EXACTLY (every block, including
+    `text=None` placeholders rendered as ""). Without this exact match the joined
+    string and the annotation offsets emitted to the client diverge — annotations
+    can overrun the content length when an earlier "thought-only" block has text=None.
     """
-    block_texts = [block["text"] for block in grounding_blocks if block.get("text")]
-    if block_texts:
-        return "\n".join(block_texts)
+    if grounding_blocks:
+        return "\n".join((block["text"] or "") for block in grounding_blocks)
     return " ".join(
         event.get("content", "")
         for event in stream_events
