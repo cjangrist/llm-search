@@ -65,4 +65,4 @@ ENV KIMI_SANDBOX_DIR=/tmp/kimi-sandbox
 EXPOSE 8080
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--timeout", "290", "--workers", "4", "llm_search.server:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--timeout", "330", "--workers", "4", "llm_search.server:app"]
