@@ -213,19 +213,35 @@ def extract_search_sources(stream_events):
 
 
 def detect_provider_failure(stream_events, model_response):
-    """Return an error message if the Kimi run failed, else None.
+    """Return an error message string if the Kimi run failed, else None.
 
     Kimi-cli emits role=="error" or type=="error" events on auth/rate-limit/CLI-crash.
     A clean crash also produces an empty model_response — also a failure.
+
+    `event.content` can be a string OR a list-of-parts (kimi's stream-json sometimes
+    wraps text in a parts list); coerce to a string so the caller's [:240] slice never
+    crashes with TypeError.
     """
     for event in stream_events:
         if event.get("role") == "error":
-            return event.get("content") or "<kimi role=error event with no content>"
+            return _ensure_failure_string(event.get("content"), "<kimi role=error event with no content>")
         if (event.get("type") or "").lower() in {"error", "turn.failed"}:
-            return event.get("message") or "<kimi error event with no message>"
+            return _ensure_failure_string(event.get("message"), "<kimi error event with no message>")
     if not model_response:
         return "kimi returned empty model response (auth/rate-limit/CLI-crash likely)"
     return None
+
+
+def _ensure_failure_string(value, fallback):
+    """Coerce a polymorphic event field into a string for the failure-message channel."""
+    if isinstance(value, str) and value:
+        return value
+    if value:
+        try:
+            return json.dumps(value, default=str)
+        except (TypeError, ValueError):
+            return str(value)
+    return fallback
 
 
 def extract_model_response(stream_events):

@@ -158,19 +158,34 @@ def extract_model_response(stream_events):
 
 
 def detect_provider_failure(stream_events):
-    """Return an error message if the Claude run failed, else None.
+    """Return an error message string if the Claude run failed, else None.
 
     Claude Code emits a `result` event with `is_error: True` and the failure
     text in the `result` field on auth failures, rate limits, and other CLI
     errors. Without this check the failure message gets passed through as
     if it were the model's answer.
+
+    Coerces non-string `result` values (dict/list) to JSON so downstream
+    `failure_message[:240]` slicing in the caller doesn't crash with TypeError.
     """
     for event in stream_events:
         if event.get("type") != "result":
             continue
         if event.get("is_error"):
-            return event.get("result", "<unknown claude error>")
+            return _ensure_failure_string(event.get("result"), "<unknown claude error>")
     return None
+
+
+def _ensure_failure_string(value, fallback):
+    """Coerce a polymorphic event field into a string for the failure-message channel."""
+    if isinstance(value, str) and value:
+        return value
+    if value:
+        try:
+            return json.dumps(value, default=str)
+        except (TypeError, ValueError):
+            return str(value)
+    return fallback
 
 
 def extract_markdown_link_annotations(model_text, search_sources):

@@ -404,14 +404,17 @@ def detect_provider_failure(stream_events, grounding_blocks, model_response):
             # event["error"] can be a dict, None, or string. Coerce to dict only when it IS one.
             error_field = event.get("error")
             error_field_dict = error_field if isinstance(error_field, dict) else {}
-            return (
+            return _ensure_failure_string(
                 event.get("message")
                 or error_field_dict.get("message")
-                or (error_field if isinstance(error_field, str) else None)
-                or "<gemini error event with no message>"
+                or (error_field if isinstance(error_field, str) else None),
+                "<gemini error event with no message>",
             )
         if event.get("is_error"):
-            return event.get("error") or event.get("content") or "<gemini event flagged is_error=true>"
+            return _ensure_failure_string(
+                event.get("error") or event.get("content"),
+                "<gemini event flagged is_error=true>",
+            )
     # Filter out "thought-only" blocks (text=None) before deciding the response is real.
     # A response made up entirely of thought-only blocks contributes zero text to the client
     # — same end-user effect as no grounding at all, surface as HTTP 500.
@@ -419,6 +422,18 @@ def detect_provider_failure(stream_events, grounding_blocks, model_response):
     if not model_response and not blocks_with_text:
         return "gemini returned empty response with no grounding text (auth/rate-limit/CLI-crash likely)"
     return None
+
+
+def _ensure_failure_string(value, fallback):
+    """Coerce a polymorphic event field into a string for the failure-message channel."""
+    if isinstance(value, str) and value:
+        return value
+    if value:
+        try:
+            return json.dumps(value, default=str)
+        except (TypeError, ValueError):
+            return str(value)
+    return fallback
 
 
 def make_request_sandbox(parent_sandbox_dir, request_id, ignore_pattern=None):

@@ -183,18 +183,30 @@ def detect_provider_failure(events, model_response):
             # call .get on actual dicts.
             error_field = event.get("error")
             error_field_dict = error_field if isinstance(error_field, dict) else {}
-            last_failure = (
+            last_failure = _ensure_failure_string(
                 error_field_dict.get("message")
-                or (error_field if isinstance(error_field, str) else None)
-                or "<turn.failed with no message>"
+                or (error_field if isinstance(error_field, str) else None),
+                "<turn.failed with no message>",
             )
         elif event_type == "error":
-            last_failure = event.get("message") or "<codex error event with no message>"
+            last_failure = _ensure_failure_string(event.get("message"), "<codex error event with no message>")
     if last_failure:
         return last_failure
     if not model_response:
         return "codex returned empty agent_message (no turn.failed, but no content)"
     return None
+
+
+def _ensure_failure_string(value, fallback):
+    """Coerce a polymorphic event field into a string for the failure-message channel."""
+    if isinstance(value, str) and value:
+        return value
+    if value:
+        try:
+            return json.dumps(value, default=str)
+        except (TypeError, ValueError):
+            return str(value)
+    return fallback
 
 
 def extract_markdown_link_annotations(model_text):
