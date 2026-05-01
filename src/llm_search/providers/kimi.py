@@ -88,17 +88,21 @@ def write_kimi_config_file(api_key, output_dir, request_id):
 
 
 def discard_kimi_config_file(config_path, output_dir):
-    """Move a used kimi config file to a request-scoped trash subdir (RULE_07: no rm)."""
-    if not config_path or not os.path.isfile(config_path):
-        return
-    trash_dir = os.path.join(output_dir, ".trash", datetime.now().strftime("%Y%m%d"))
-    os.makedirs(trash_dir, mode=0o700, exist_ok=True)
-    trashed = os.path.join(trash_dir, os.path.basename(config_path))
+    """Move a used kimi config file to a request-scoped trash subdir (RULE_07: no rm).
+
+    Cleanup must never throw — we run from a `finally:` block where an unexpected raise
+    masks the original provider exception AND leaves the secret api-key TOML on disk.
+    """
     try:
+        if not config_path or not os.path.isfile(config_path):
+            return
+        trash_dir = os.path.join(output_dir, ".trash", datetime.now().strftime("%Y%m%d"))
+        os.makedirs(trash_dir, mode=0o700, exist_ok=True)
+        trashed = os.path.join(trash_dir, os.path.basename(config_path))
         os.replace(config_path, trashed)
         logger.info("discard_kimi_config_file: moved %s -> %s", config_path, trashed)
-    except OSError as move_error:
-        logger.warning("discard_kimi_config_file: failed to move %s: %s", config_path, move_error)
+    except OSError as cleanup_error:
+        logger.warning("discard_kimi_config_file: cleanup failed for %s: %s", config_path, cleanup_error)
 
 
 REDACT_VALUE_FLAGS = {"-p", "--prompt", "-c", "--command", "--config", "--config-file"}
@@ -112,16 +116,19 @@ def make_request_sandbox(parent_sandbox_dir, request_id):
 
 
 def discard_request_sandbox(request_sandbox, parent_sandbox_dir):
-    """Move a used request sandbox into a date-stamped .trash subdir (no rm; RULE_07)."""
-    if not request_sandbox or not os.path.isdir(request_sandbox):
-        return
-    trash_dir = os.path.join(parent_sandbox_dir, ".trash", datetime.now().strftime("%Y%m%d"))
-    os.makedirs(trash_dir, mode=0o700, exist_ok=True)
-    trashed = os.path.join(trash_dir, os.path.basename(request_sandbox))
+    """Move a used request sandbox into a date-stamped .trash subdir (no rm; RULE_07).
+
+    Cleanup must never throw — see discard_kimi_config_file for the same rationale.
+    """
     try:
+        if not request_sandbox or not os.path.isdir(request_sandbox):
+            return
+        trash_dir = os.path.join(parent_sandbox_dir, ".trash", datetime.now().strftime("%Y%m%d"))
+        os.makedirs(trash_dir, mode=0o700, exist_ok=True)
+        trashed = os.path.join(trash_dir, os.path.basename(request_sandbox))
         os.replace(request_sandbox, trashed)
-    except OSError as move_error:
-        logger.warning("discard_request_sandbox: failed to move %s: %s", request_sandbox, move_error)
+    except OSError as cleanup_error:
+        logger.warning("discard_request_sandbox: cleanup failed for %s: %s", request_sandbox, cleanup_error)
 
 
 def redact_argv_for_logging(kimi_arguments):

@@ -429,16 +429,20 @@ def make_request_sandbox(parent_sandbox_dir, request_id, ignore_pattern=None):
 
 
 def discard_request_sandbox(request_sandbox, parent_sandbox_dir):
-    """Move a used request sandbox into a date-stamped .trash subdir (no rm; RULE_07)."""
-    if not request_sandbox or not os.path.isdir(request_sandbox):
-        return
-    trash_dir = os.path.join(parent_sandbox_dir, ".trash", datetime.now().strftime("%Y%m%d"))
-    os.makedirs(trash_dir, mode=0o700, exist_ok=True)
-    trashed = os.path.join(trash_dir, os.path.basename(request_sandbox))
+    """Move a used request sandbox into a date-stamped .trash subdir (no rm; RULE_07).
+
+    Cleanup must never throw — we run from a `finally:` block where an unexpected raise
+    masks the original provider exception. Catch ALL OSErrors (ENOSPC, EACCES, RO-FS).
+    """
     try:
+        if not request_sandbox or not os.path.isdir(request_sandbox):
+            return
+        trash_dir = os.path.join(parent_sandbox_dir, ".trash", datetime.now().strftime("%Y%m%d"))
+        os.makedirs(trash_dir, mode=0o700, exist_ok=True)
+        trashed = os.path.join(trash_dir, os.path.basename(request_sandbox))
         os.replace(request_sandbox, trashed)
-    except OSError as move_error:
-        logger.warning("discard_request_sandbox: failed to move %s: %s", request_sandbox, move_error)
+    except OSError as cleanup_error:
+        logger.warning("discard_request_sandbox: cleanup failed for %s: %s", request_sandbox, cleanup_error)
 
 
 def run_search(prompt, model, output_dir, timeout, request_id=None, environment=None, sandbox_dir=None, script_path=None):
