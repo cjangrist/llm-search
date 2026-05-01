@@ -19,6 +19,7 @@ import traceback
 import uuid
 from datetime import datetime, timezone
 
+import sh
 from flask import Flask, jsonify, request
 
 from llm_search.config import HOST, OUTPUT_DIR, PORT, PROVIDER_DEFAULTS
@@ -157,6 +158,25 @@ def extract_prompt_from_messages(messages):
     return None
 
 
+def sanitize_exception_for_log(exception):
+    """Render an exception for the request log without leaking argv content.
+
+    sh.ErrorReturnCode's str() embeds the full argv (RAN: ...) — for the four CLI providers
+    that argv carries the user prompt and (for codex) the 6.5KB system prompt as
+    --config instructions=<...>. Persist only {type, exit_code, stderr_tail} from sh
+    exceptions; full str() for other exception types.
+    """
+    if isinstance(exception, sh.ErrorReturnCode):
+        try:
+            stderr_tail = exception.stderr.decode("utf-8", errors="replace")[-200:] if exception.stderr else ""
+        except Exception:
+            stderr_tail = ""
+        return f"{type(exception).__name__}(exit_code={exception.exit_code}, stderr_tail={stderr_tail!r})"
+    if isinstance(exception, sh.TimeoutException):
+        return f"{type(exception).__name__}(timeout exceeded)"
+    return f"{type(exception).__name__}: {exception}"
+
+
 def make_error_response(message, status_code, param=None):
     """Build an OpenAI-style error response."""
     return jsonify({
@@ -244,8 +264,8 @@ def handle_chat_completions():
         response_body = build_chat_completion_response(model_string, model_response_text, openai_output)
         return jsonify(response_body)
     except Exception as search_error:
-        runtime_error = str(search_error)
-        logger.error("Chat completion failed (request_id=%s): %s\n%s", request_id, search_error, traceback.format_exc())
+        runtime_error = sanitize_exception_for_log(search_error)
+        logger.error("Chat completion failed (request_id=%s): %s", request_id, runtime_error)
         return make_error_response(f"internal error (request_id={request_id})", 500)
     finally:
         latency_seconds = time.time() - started_at
