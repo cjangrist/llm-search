@@ -4,8 +4,8 @@ The `sh` library's `_timeout` only kills the immediate child. CLIs like bun, gem
 kimi-cli spawn helpers (node, python, etc.) which become orphaned when the parent dies — they
 keep holding credential files, keep emitting trace output, and (in the worst case) keep making
 upstream API calls. Wrap every sh.* invocation with `_new_session=True` so the immediate child
-is a session leader, and use this module's `kill_subprocess_tree` helper from the call site's
-`_done` callback so the entire group dies even if `sh._timeout` already SIGKILLed the leader.
+is a session leader, and pass `_done=kill_subprocess_tree_on_done()` so the whole pgroup dies
+the instant sh reaps the leader (no PID-reuse race window between reap and a finally-block kill).
 """
 
 import logging
@@ -15,37 +15,35 @@ import signal
 logger = logging.getLogger(__name__)
 
 
-def kill_subprocess_tree(pid):
-    """Send SIGKILL to the process group identified by `pid`.
-
-    `pid` should be the leader of a session/pgroup created via `_new_session=True`. Safe to call
-    even after the leader has already exited — surviving group members get caught.
-    Idempotent: ProcessLookupError / PermissionError on already-reaped/escaped pids is swallowed.
-    """
+def killpg_silent(pid):
+    """SIGKILL the process group identified by `pid`. Idempotent; swallows benign errors."""
     if not pid:
         return
     try:
         os.killpg(pid, signal.SIGKILL)
-        logger.debug("kill_subprocess_tree: SIGKILL pgroup %s", pid)
+        logger.debug("killpg_silent: SIGKILL pgroup %s", pid)
     except ProcessLookupError:
         pass
     except PermissionError as kill_error:
-        logger.warning("kill_subprocess_tree: cannot kill pgroup %s — %s", pid, kill_error)
+        logger.warning("killpg_silent: cannot kill pgroup %s — %s", pid, kill_error)
 
 
-def make_done_callback(pid_holder):
-    """Return an sh `_done` callback that records the immediate-child PID into `pid_holder[0]`.
+def kill_subprocess_tree_on_done():
+    """Return an sh `_done` callback that SIGKILLs the immediate-child's process group.
+
+    Captures `cmd.process.pid` and calls killpg the moment sh fires _done — i.e. immediately
+    after waitpid() returns inside sh. This is strictly earlier than reading the pid after
+    sh.cli(...) returns: it shrinks the PID-reuse race window from "between waitpid and our
+    finally block" (potentially ms under load) to "single Python statement after waitpid"
+    (microseconds). Surviving descendants of the original session/pgroup are caught.
 
     Use pattern:
-        captured = [None]
-        try:
-            raw = sh.cli(*args, _new_session=True, _done=make_done_callback(captured), _timeout=N, ...)
-        finally:
-            kill_subprocess_tree(captured[0])
+        sh.cli(*args, _new_session=True, _done=kill_subprocess_tree_on_done(), _timeout=N, ...)
     """
-    def record_then_complete(cmd, _success, _exit_code):
+    def callback(cmd, _success, _exit_code):
         try:
-            pid_holder[0] = cmd.process.pid
+            pid = cmd.process.pid
         except AttributeError:
-            pid_holder[0] = None
-    return record_then_complete
+            return
+        killpg_silent(pid)
+    return callback

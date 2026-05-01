@@ -18,7 +18,7 @@ import sh
 
 from llm_search.config import CLAUDE_ALLOWED_TOOLS, CLAUDE_DEFAULT_MODEL, CLAUDE_DEFAULT_OUTPUT_DIR, PROVIDER_DEFAULTS
 from llm_search.prompts import load_system_prompt
-from llm_search.providers.subprocess_safety import kill_subprocess_tree, make_done_callback
+from llm_search.providers.subprocess_safety import kill_subprocess_tree_on_done
 from llm_search.response import find_markdown_links
 
 logger = logging.getLogger(__name__)
@@ -43,28 +43,24 @@ def call_claude(prompt, model, output_dir, timeout_seconds, environment):
     augmented_prompt = f'CRITICAL RULE-> using web_search answer: "{prompt}"'
 
     logger.info("Running: claude -p ... --model %s ...", model)
-    captured_pid = [None]
-    try:
-        raw_output = sh.claude(
-            "-p", augmented_prompt,
-            "--model", model,
-            "--output-format", "stream-json",
-            "--verbose",
-            "--no-session-persistence",
-            "--permission-mode", "bypassPermissions",
-            "--system-prompt", system_prompt,
-            "--tools", ",".join(CLAUDE_ALLOWED_TOOLS),
-            "--mcp-config", '{"mcpServers":{}}',
-            "--strict-mcp-config",
-            _env=clean_environment,
-            _ok_code=[0, 1],
-            _encoding="utf-8",
-            _timeout=timeout_seconds,
-            _new_session=True,
-            _done=make_done_callback(captured_pid),
-        )
-    finally:
-        kill_subprocess_tree(captured_pid[0])
+    raw_output = sh.claude(
+        "-p", augmented_prompt,
+        "--model", model,
+        "--output-format", "stream-json",
+        "--verbose",
+        "--no-session-persistence",
+        "--permission-mode", "bypassPermissions",
+        "--system-prompt", system_prompt,
+        "--tools", ",".join(CLAUDE_ALLOWED_TOOLS),
+        "--mcp-config", '{"mcpServers":{}}',
+        "--strict-mcp-config",
+        _env=clean_environment,
+        _ok_code=[0, 1],
+        _encoding="utf-8",
+        _timeout=timeout_seconds,
+        _new_session=True,
+        _done=kill_subprocess_tree_on_done(),
+    )
 
     raw_text = str(raw_output)
     logger.info("call_claude returned %d chars", len(raw_text))
