@@ -172,15 +172,36 @@ def make_error_response(message, status_code, param=None):
 MAX_TIMEOUT_SECONDS = 290
 
 
+def validate_message_content(content):
+    """Validate a single message's content shape. Returns error_message_str or None."""
+    if content is None or isinstance(content, str):
+        return None
+    if isinstance(content, list):
+        for part in content:
+            if not isinstance(part, dict):
+                return "each part of message.content (when content is a list) must be a JSON object"
+            if part.get("type") == "text" and not isinstance(part.get("text", ""), str):
+                return "text-typed content parts must have a string `text` field"
+        return None
+    return "message.content must be a string, a list of part-objects, or null"
+
+
 def validate_request_body(body):
     """Validate the parsed JSON body. Returns (valid_dict, error_response) — exactly one is non-None."""
     if not isinstance(body, dict):
         return None, make_error_response("request body must be a JSON object", 400, None)
+    if not isinstance(body.get("model"), str):
+        return None, make_error_response("model is required and must be a string", 400, "model")
     messages = body.get("messages")
     if not isinstance(messages, list) or not messages:
         return None, make_error_response("messages is required and must be a non-empty array", 400, "messages")
     if not all(isinstance(message, dict) for message in messages):
         return None, make_error_response("each entry in messages must be a JSON object", 400, "messages")
+    for message in messages:
+        if "content" in message:
+            content_error = validate_message_content(message["content"])
+            if content_error:
+                return None, make_error_response(content_error, 400, "messages")
     raw_timeout = body.get("timeout")
     if raw_timeout is not None and (not isinstance(raw_timeout, int) or isinstance(raw_timeout, bool) or not 1 <= raw_timeout <= MAX_TIMEOUT_SECONDS):
         return None, make_error_response(f"timeout must be an integer in [1, {MAX_TIMEOUT_SECONDS}] seconds", 400, "timeout")
