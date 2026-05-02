@@ -158,22 +158,27 @@ def extract_model_response(stream_events):
     return "\n".join(response_parts) if response_parts else ""
 
 
-def detect_provider_failure(stream_events):
+def detect_provider_failure(stream_events, model_response):
     """Return an error message string if the Claude run failed, else None.
 
-    Claude Code emits a `result` event with `is_error: True` and the failure
-    text in the `result` field on auth failures, rate limits, and other CLI
-    errors. Without this check the failure message gets passed through as
-    if it were the model's answer.
-
-    Coerces non-string `result` values (dict/list) to JSON so downstream
-    `failure_message[:240]` slicing in the caller doesn't crash with TypeError.
+    Two failure modes:
+    1. Explicit: a `result` event with `is_error: True` carries the failure
+       text in the `result` field on auth failures, rate limits, and other
+       CLI errors. Coerces non-string `result` values (dict/list) to JSON so
+       the caller's `failure_message[:240]` slice doesn't crash with TypeError.
+    2. Silent: stream ends with no is_error=True event AND no assistant text.
+       This happens on truncated streams, kernel kills, transport drops, and
+       upstream errors that close the stream without an error event. Without
+       this guard the API returns HTTP 200 with empty `content` — a contract
+       violation. Mirrors codex/gemini/kimi which already have this guard.
     """
     for event in stream_events:
         if event.get("type") != "result":
             continue
         if event.get("is_error"):
             return _ensure_failure_string(event.get("result"), "<unknown claude error>")
+    if not model_response:
+        return "claude returned empty model response (auth/rate-limit/CLI-crash likely)"
     return None
 
 
@@ -328,14 +333,15 @@ def run_search(prompt, model, output_dir, timeout, request_id=None, environment=
     with open(raw_json_path, "w") as output_file:
         json.dump(stream_events, output_file, indent=2)
 
-    failure_message = detect_provider_failure(stream_events)
-    if failure_message:
-        logger.error("Claude reported is_error=True: %s", failure_message[:240])
-        raise RuntimeError(f"claude provider failed: {failure_message}")
-
     search_queries = extract_search_queries(stream_events)
     search_sources = extract_search_results(stream_events)
     model_response = extract_model_response(stream_events)
+
+    failure_message = detect_provider_failure(stream_events, model_response)
+    if failure_message:
+        logger.error("Claude run failed: %s", failure_message[:240])
+        raise RuntimeError(f"claude provider failed: {failure_message}")
+
     openai_output = build_openai_format(search_queries, search_sources, model_response)
 
     with open(search_json_path, "w") as output_file:
@@ -376,15 +382,15 @@ def main():
         json.dump(stream_events, output_file, indent=2)
     logger.info("Raw stream-json saved to %s (%d events)", raw_json_path, len(stream_events))
 
-    failure_message = detect_provider_failure(stream_events)
-    if failure_message:
-        logger.error("Claude reported is_error=True: %s", failure_message[:240])
-        sys.exit(2)
-
     search_queries = extract_search_queries(stream_events)
     search_sources = extract_search_results(stream_events)
     model_response = extract_model_response(stream_events)
     logger.info("Found %d search queries, %d sources", len(search_queries), len(search_sources))
+
+    failure_message = detect_provider_failure(stream_events, model_response)
+    if failure_message:
+        logger.error("Claude run failed: %s", failure_message[:240])
+        sys.exit(2)
 
     openai_output = build_openai_format(search_queries, search_sources, model_response)
     with open(search_json_path, "w") as output_file:
