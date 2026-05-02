@@ -21,7 +21,7 @@ import sh
 
 from llm_search.config import CODEX_DEFAULT_MODEL, CODEX_DEFAULT_OUTPUT_DIR, PROVIDER_DEFAULTS
 from llm_search.prompts import load_system_prompt
-from llm_search.providers.subprocess_safety import kill_subprocess_tree_on_done
+from llm_search.providers.subprocess_safety import build_sanitized_environment, kill_subprocess_tree_on_done
 from llm_search.response import find_markdown_links
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,10 @@ def call_codex(prompt, model, timeout_seconds, trace_log_path, environment):
     """
     logger.debug("call_codex(model=%s, timeout=%ds, trace_log=%s)", model, timeout_seconds, trace_log_path)
 
-    trace_environment = {**environment, "RUST_LOG": "codex_api=trace"}
+    # Codex authenticates via ~/.codex OAuth credentials, not env. Strip credential-shaped
+    # env vars (ANTHROPIC_*, KIMI_API_KEY, etc.) so a prompt-or-tool escape inside the CLI
+    # cannot exfiltrate keys for the other providers from the same gunicorn process.
+    trace_environment = {**build_sanitized_environment(environment), "RUST_LOG": "codex_api=trace"}
     system_prompt = load_system_prompt()
 
     augmented_prompt = f'CRITICAL RULE-> using web_search answer: "{prompt}"'

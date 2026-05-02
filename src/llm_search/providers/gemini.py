@@ -26,7 +26,7 @@ from llm_search.config import (
     VERTEX_REDIRECT_PREFIX,
 )
 from llm_search.prompts import load_system_prompt
-from llm_search.providers.subprocess_safety import kill_subprocess_tree_on_done
+from llm_search.providers.subprocess_safety import build_sanitized_environment, kill_subprocess_tree_on_done
 
 logger = logging.getLogger(__name__)
 
@@ -175,8 +175,11 @@ def call_gemini(prompt, model, output_dir, timeout_seconds, environment, sandbox
     if request_id is None:
         request_id = uuid.uuid4().hex[:12]
     activity_log_path = os.path.join(output_dir, f"gemini_activity_{request_id}.jsonl")
+    # Gemini-cli authenticates via gcloud Vertex creds, not env. Strip credential-shaped
+    # env vars (ANTHROPIC_*, KIMI_API_KEY, etc.) so a prompt-or-tool escape inside the CLI
+    # cannot exfiltrate keys for the other providers from the same gunicorn process.
     gemini_environment = {
-        **environment,
+        **build_sanitized_environment(environment),
         "GEMINI_CLI_ACTIVITY_LOG_TARGET": activity_log_path,
         "GEMINI_SYSTEM_MD": SYSTEM_PROMPT_FILE_PATH,
     }

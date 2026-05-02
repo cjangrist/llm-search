@@ -19,16 +19,23 @@ import sh
 
 from llm_search.config import CLAUDE_ALLOWED_TOOLS, CLAUDE_DEFAULT_MODEL, CLAUDE_DEFAULT_OUTPUT_DIR, PROVIDER_DEFAULTS
 from llm_search.prompts import load_system_prompt
-from llm_search.providers.subprocess_safety import kill_subprocess_tree_on_done
+from llm_search.providers.subprocess_safety import build_sanitized_environment, kill_subprocess_tree_on_done
 from llm_search.response import find_markdown_links
 
 logger = logging.getLogger(__name__)
 
 
 def build_claude_environment(parent_environment):
-    """Strip CLAUDE_*/CLAUDECODE_* vars from a parent env mapping; force NODE_NO_WARNINGS=1."""
+    """Strip CLAUDE_*/CLAUDECODE_* and credential-shaped vars; force NODE_NO_WARNINGS=1.
+
+    Claude Code authenticates via the OAuth credentials file at ~/.claude — it never
+    reads ANTHROPIC_API_KEY at print-mode runtime. Strip all credential-shaped env vars
+    (ANTHROPIC_*, OPENAI_*, KIMI_API_KEY, etc.) so a prompt-or-tool escape inside the
+    CLI cannot exfiltrate keys for the other providers from the same gunicorn process.
+    """
+    clean = build_sanitized_environment(parent_environment)
     clean = {
-        key: value for key, value in parent_environment.items()
+        key: value for key, value in clean.items()
         if not key.startswith("CLAUDECODE") and not key.startswith("CLAUDE_CODE_")
     }
     clean["NODE_NO_WARNINGS"] = "1"

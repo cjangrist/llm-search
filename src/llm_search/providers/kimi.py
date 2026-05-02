@@ -26,7 +26,7 @@ from llm_search.providers.kimi_parsing import (
     extract_search_sources,
     parse_stream_events,
 )
-from llm_search.providers.subprocess_safety import kill_subprocess_tree_on_done
+from llm_search.providers.subprocess_safety import build_sanitized_environment, kill_subprocess_tree_on_done
 
 logger = logging.getLogger(__name__)
 
@@ -205,10 +205,15 @@ def call_kimi(prompt, model, timeout_seconds, stderr_log_path, sandbox_dir, api_
         logger.info("Running: kimi %s (prompt=%d chars)", " ".join(redact_argv_for_logging(kimi_arguments)), len(augmented_prompt))
 
         stderr_file = open(stderr_log_path, "w") if stderr_log_path else None
+        # Kimi reads its api key from --config-file (mode 0o600), not from KIMI_API_KEY env.
+        # Strip credential-shaped vars from the child env so a prompt-or-tool escape inside
+        # the CLI cannot exfiltrate the kimi key (it's in the TOML, not env) or keys for the
+        # other providers (ANTHROPIC_*, OPENAI_*) that share the gunicorn process env.
+        sanitized_environment = build_sanitized_environment(environment)
         try:
             raw_output = sh.kimi(
                 *kimi_arguments,
-                _env=dict(environment), _ok_code=[0, 1], _encoding="utf-8",
+                _env=sanitized_environment, _ok_code=[0, 1], _encoding="utf-8",
                 _err=stderr_file, _timeout=timeout_seconds,
                 _new_session=True, _done=kill_subprocess_tree_on_done(),
             )

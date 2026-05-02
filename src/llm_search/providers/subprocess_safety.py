@@ -47,3 +47,52 @@ def kill_subprocess_tree_on_done():
             return
         killpg_silent(pid)
     return callback
+
+
+SECRET_NAME_SUFFIXES = ("_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_PASSWD", "_PRIVATE_KEY")
+SECRET_NAME_PREFIXES = ("ANTHROPIC_", "OPENAI_", "GOOGLE_", "GEMINI_", "VERTEX_", "MOONSHOT_", "KIMI_", "DOPPLER_", "AWS_", "AZURE_", "GCP_")
+
+
+def _looks_like_secret(env_name):
+    """Heuristic: is this env-var name plausibly a credential?"""
+    if env_name.endswith(SECRET_NAME_SUFFIXES):
+        return True
+    if env_name.startswith(SECRET_NAME_PREFIXES):
+        # Allow well-known non-secret config and FILE-PATH env vars (the file at the path may
+        # be a secret, but the path string is not — it has to flow through to the CLI so it
+        # can read the file). Examples: GEMINI_DEFAULT_MODEL, GOOGLE_APPLICATION_CREDENTIALS,
+        # KIMI_SANDBOX_DIR, AWS_SHARED_CREDENTIALS_FILE.
+        non_secret_substrings = (
+            "_DIR", "_PATH", "_MODEL", "_HOST", "_PORT", "_REGION", "_PROJECT",
+            "_BUCKET", "_TIMEOUT", "_DEFAULT", "_FILE", "_CERT", "_CREDENTIALS",
+            "_PROFILE", "_URL", "_ENDPOINT",
+        )
+        return not any(substring in env_name for substring in non_secret_substrings)
+    return False
+
+
+def build_sanitized_environment(parent_environment, allow_names=()):
+    """Strip credential-shaped env vars from a parent env mapping.
+
+    Each provider CLI runs untrusted upstream content (web pages fetched by the model's
+    web_search tool) and may itself execute child processes. We do not want a prompt-or-tool
+    escape from any provider to walk off with the kimi/codex/anthropic API keys for the OTHER
+    providers. The host-level secret transports (Anthropic OAuth ~/.claude, codex OAuth
+    ~/.codex, gcloud-via-vertex, kimi `--config-file`) are intact; this only removes the
+    redundant env-var copies that the CLI never reads.
+
+    Args:
+        parent_environment: source env mapping (typically os.environ).
+        allow_names: iterable of literal env-var names to keep even if they look like secrets
+            (use sparingly — only when a CLI MUST receive a key via env and there is no
+            file/fd alternative).
+
+    Returns:
+        dict — a fresh dict (never the parent), suitable for `_env=` to sh.*().
+    """
+    allow_set = frozenset(allow_names)
+    return {
+        env_name: env_value
+        for env_name, env_value in parent_environment.items()
+        if env_name in allow_set or not _looks_like_secret(env_name)
+    }
