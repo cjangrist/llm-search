@@ -28,7 +28,12 @@ logger = logging.getLogger(__name__)
 
 
 def call_codex(prompt, model, timeout_seconds, trace_log_path, environment):
-    """Call Codex CLI in exec mode via sh with JSONL output and RUST_LOG=trace for raw SSE capture."""
+    """Call Codex CLI in exec mode via sh with JSONL output and RUST_LOG=trace for raw SSE capture.
+
+    The trace file captures raw SSE that includes the upstream `Authorization: Bearer …`
+    header. Open with mode 0o600 (umask-independent) so it is never world/group readable
+    while the process is alive; the caller is responsible for shred-then-unlink after parse.
+    """
     logger.debug("call_codex(model=%s, timeout=%ds, trace_log=%s)", model, timeout_seconds, trace_log_path)
 
     trace_environment = {**environment, "RUST_LOG": "codex_api=trace"}
@@ -37,7 +42,16 @@ def call_codex(prompt, model, timeout_seconds, trace_log_path, environment):
     augmented_prompt = f'CRITICAL RULE-> using web_search answer: "{prompt}"'
 
     logger.info("Running: codex exec --json -m %s (with RUST_LOG=codex_api=trace) ...", model)
-    with open(trace_log_path, "w") as trace_file:
+    fd = os.open(trace_log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        trace_file = os.fdopen(fd, "w")
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
+    try:
         raw_output = sh.codex(
             "-c", "service_tier=fast",
             "exec",
@@ -57,10 +71,39 @@ def call_codex(prompt, model, timeout_seconds, trace_log_path, environment):
             _new_session=True,
             _done=kill_subprocess_tree_on_done(),
         )
+    finally:
+        try:
+            trace_file.close()
+        except OSError as close_error:
+            logger.warning("call_codex: trace_file.close() failed: %s", close_error)
 
     raw_text = str(raw_output)
     logger.debug("call_codex returned %d chars on stdout", len(raw_text))
     return raw_text
+
+
+def shred_trace_file(trace_log_path):
+    """Overwrite-then-unlink a codex trace file so the embedded bearer token is unrecoverable.
+
+    The trace file holds the upstream `Authorization: Bearer …` header (RUST_LOG=trace).
+    RULE_07 forbids `rm` of user data; secrets are not user data and the secure-delete
+    idiom is overwrite-then-unlink. Cleanup must never throw — runs from a `finally:`
+    where an unexpected raise masks the original provider exception AND leaves the
+    bearer token on disk.
+    """
+    try:
+        if not trace_log_path or not os.path.isfile(trace_log_path):
+            return
+        size = os.path.getsize(trace_log_path)
+        if size > 0:
+            with open(trace_log_path, "r+b") as scrub_handle:
+                scrub_handle.write(b"\x00" * size)
+                scrub_handle.flush()
+                os.fsync(scrub_handle.fileno())
+        os.unlink(trace_log_path)
+        logger.info("shred_trace_file: scrubbed and unlinked %s (%d bytes)", trace_log_path, size)
+    except OSError as cleanup_error:
+        logger.warning("shred_trace_file: cleanup failed for %s: %s", trace_log_path, cleanup_error)
 
 
 def parse_jsonl_events(raw_text):
@@ -333,23 +376,26 @@ def run_search(prompt, model, output_dir, timeout, request_id=None, environment=
     trace_log_path = os.path.join(output_dir, f"codex_trace_{request_id}.log")
     search_json_path = os.path.join(output_dir, f"codex_search_{request_id}.json")
 
-    raw_text = call_codex(prompt, model, timeout, trace_log_path, environment if environment is not None else os.environ)
-    events = parse_jsonl_events(raw_text)
-    with open(raw_jsonl_path, "w") as output_file:
-        json.dump(events, output_file, indent=2)
+    try:
+        raw_text = call_codex(prompt, model, timeout, trace_log_path, environment if environment is not None else os.environ)
+        events = parse_jsonl_events(raw_text)
+        with open(raw_jsonl_path, "w") as output_file:
+            json.dump(events, output_file, indent=2)
 
-    search_queries, native_annotations, model_response = parse_codex_outputs(events, trace_log_path)
+        search_queries, native_annotations, model_response = parse_codex_outputs(events, trace_log_path)
 
-    failure_message = detect_provider_failure(events, model_response)
-    if failure_message:
-        logger.error("Codex run failed: %s", failure_message[:240])
-        raise RuntimeError(f"codex provider failed: {failure_message}")
+        failure_message = detect_provider_failure(events, model_response)
+        if failure_message:
+            logger.error("Codex run failed: %s", failure_message[:240])
+            raise RuntimeError(f"codex provider failed: {failure_message}")
 
-    openai_output = build_openai_format(search_queries, model_response, native_annotations)
-    with open(search_json_path, "w") as output_file:
-        json.dump(openai_output, output_file, indent=2)
-    logger.debug("run_search returning %d chars response", len(model_response))
-    return openai_output, model_response
+        openai_output = build_openai_format(search_queries, model_response, native_annotations)
+        with open(search_json_path, "w") as output_file:
+            json.dump(openai_output, output_file, indent=2)
+        logger.debug("run_search returning %d chars response", len(model_response))
+        return openai_output, model_response
+    finally:
+        shred_trace_file(trace_log_path)
 
 
 def build_argument_parser():
@@ -377,28 +423,31 @@ def main():
     search_json_path = os.path.join(args.raw_dir, f"codex_search_{timestamp}.json")
 
     logger.info("Calling Codex model=%s", args.model)
-    raw_text = call_codex(args.prompt, args.model, args.timeout, trace_log_path, os.environ)
+    try:
+        raw_text = call_codex(args.prompt, args.model, args.timeout, trace_log_path, os.environ)
 
-    events = parse_jsonl_events(raw_text)
-    with open(raw_jsonl_path, "w") as output_file:
-        json.dump(events, output_file, indent=2)
-    logger.info("Raw JSONL saved to %s (%d events)", raw_jsonl_path, len(events))
+        events = parse_jsonl_events(raw_text)
+        with open(raw_jsonl_path, "w") as output_file:
+            json.dump(events, output_file, indent=2)
+        logger.info("Raw JSONL saved to %s (%d events)", raw_jsonl_path, len(events))
 
-    search_queries, native_annotations, model_response = parse_codex_outputs(events, trace_log_path)
-    logger.info("Parsed %d queries, %d native annotations, %d response chars",
-                len(search_queries), len(native_annotations), len(model_response))
+        search_queries, native_annotations, model_response = parse_codex_outputs(events, trace_log_path)
+        logger.info("Parsed %d queries, %d native annotations, %d response chars",
+                    len(search_queries), len(native_annotations), len(model_response))
 
-    failure_message = detect_provider_failure(events, model_response)
-    if failure_message:
-        logger.error("Codex run failed: %s", failure_message[:240])
-        sys.exit(2)
+        failure_message = detect_provider_failure(events, model_response)
+        if failure_message:
+            logger.error("Codex run failed: %s", failure_message[:240])
+            sys.exit(2)
 
-    openai_output = build_openai_format(search_queries, model_response, native_annotations)
-    with open(search_json_path, "w") as output_file:
-        json.dump(openai_output, output_file, indent=2)
-    logger.info("Search data saved to %s, trace log at %s", search_json_path, trace_log_path)
+        openai_output = build_openai_format(search_queries, model_response, native_annotations)
+        with open(search_json_path, "w") as output_file:
+            json.dump(openai_output, output_file, indent=2)
+        logger.info("Search data saved to %s", search_json_path)
 
-    print(model_response)
+        print(model_response)
+    finally:
+        shred_trace_file(trace_log_path)
 
 
 if __name__ == "__main__":
