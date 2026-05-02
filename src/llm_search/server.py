@@ -236,7 +236,13 @@ def handle_chat_completions():
         messages (list): OpenAI-format messages array
         timeout (int, optional): CLI timeout in seconds
     """
-    body = request.get_json(silent=True, force=True)
+    # Reject non-JSON content types so a cross-origin HTML form with
+    # enctype="text/plain" cannot qualify as a CORS "simple request" and silently
+    # POST into the localhost API. With force=False the browser is required to
+    # preflight any request that carries Content-Type: application/json, the
+    # preflight returns no Access-Control-Allow-Origin, and the request is
+    # blocked client-side.
+    body = request.get_json(silent=True)
     body, error_response = validate_request_body(body)
     if error_response is not None:
         return error_response
