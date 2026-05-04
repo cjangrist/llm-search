@@ -10,17 +10,16 @@ Usage:
 """
 
 import argparse
-import glob
 import json
 import logging
 import os
+import threading
 import time
-import traceback
 import uuid
 from datetime import datetime, timezone
 
 import sh
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request, stream_with_context
 
 from llm_search.config import HOST, OUTPUT_DIR, PORT, PROVIDER_DEFAULTS
 from llm_search.logging_setup import setup_colorized_logging
@@ -228,6 +227,81 @@ def validate_request_body(body):
     return body, None
 
 
+HEARTBEAT_INTERVAL_SECONDS = 20
+
+
+def _run_provider_into_holder(provider, prompt, model_name, output_dir, timeout, request_id, model_string, result_holder):
+    """Worker target: run the provider, stash the openai-shaped response (or error) into result_holder."""
+    try:
+        openai_output, model_response_text = PROVIDER_RUNNERS[provider](prompt, model_name, output_dir, timeout, request_id)
+        result_holder["body"] = build_chat_completion_response(model_string, model_response_text, openai_output)
+    except Exception as search_error:
+        result_holder["error"] = search_error
+        result_holder["error_log"] = sanitize_exception_for_log(search_error)
+
+
+def _build_streamed_error_payload(request_id):
+    """Error envelope yielded mid-stream when the upstream call fails after headers were flushed.
+
+    HTTP status is already 200 by the time we know the upstream failed (the heartbeat
+    flushed headers immediately to keep the client's idle-timer alive). Emit an
+    OpenAI-compatible `error` envelope in the body — clients that parse `error.code` /
+    `error.message` (the OpenAI SDK, LiteLLM, etc.) surface it the same way they would
+    for a 5xx response.
+    """
+    return {
+        "error": {
+            "message": f"internal error (request_id={request_id})",
+            "type": "internal_error",
+            "param": None,
+            "code": None,
+        }
+    }
+
+
+def stream_chat_completion_response(provider, model_name, model_string, prompt, body, timeout, request_id, started_at):
+    """Generator: yield whitespace heartbeat every HEARTBEAT_INTERVAL_SECONDS while upstream runs, then the final JSON.
+
+    Why this exists: gemini=80s and codex=121s passed live; claude=145s and kimi=150s
+    failed for the user. Server-side response was well-formed in every case — the gap
+    was a client-side idle-timeout cutting the connection somewhere in [121s, 145s].
+    By flushing response headers immediately and yielding a single space byte every
+    HEARTBEAT_INTERVAL_SECONDS, any client measuring read-idle-timeout on the response
+    socket sees activity well under common 60s/120s/180s thresholds. The final body is
+    valid JSON regardless — leading whitespace is permitted by RFC 8259.
+    """
+    result_holder = {}
+    worker = threading.Thread(
+        target=_run_provider_into_holder,
+        args=(provider, prompt, model_name, OUTPUT_DIR, timeout, request_id, model_string, result_holder),
+        daemon=True,
+    )
+    worker.start()
+    while True:
+        worker.join(timeout=HEARTBEAT_INTERVAL_SECONDS)
+        if not worker.is_alive():
+            break
+        yield b" "
+
+    response_body = result_holder.get("body")
+    runtime_error_log = result_holder.get("error_log")
+    if response_body is None:
+        logger.error("Chat completion failed (request_id=%s): %s", request_id, runtime_error_log)
+        response_body_for_client = _build_streamed_error_payload(request_id)
+    else:
+        response_body_for_client = response_body
+
+    yield json.dumps(response_body_for_client).encode("utf-8")
+
+    latency_seconds = time.time() - started_at
+    logger.info("Completed in %.1fs (request_id=%s provider=%s model=%s)", latency_seconds, request_id, provider, model_name)
+    try:
+        write_request_log(provider, model_name, prompt, body, response_body,
+                          latency_seconds, runtime_error_log, OUTPUT_DIR, started_at, request_id)
+    except Exception as log_error:
+        logger.error("write_request_log failed (request_id=%s): %s", request_id, log_error)
+
+
 def handle_chat_completions():
     """OpenAI-compatible Chat Completions endpoint with web search grounding.
 
@@ -235,6 +309,10 @@ def handle_chat_completions():
         model (str): "provider/model_name" (e.g. "claude/haiku")
         messages (list): OpenAI-format messages array
         timeout (int, optional): CLI timeout in seconds
+
+    Long-running upstream calls (>=120s for some providers) are streamed with a
+    whitespace heartbeat to keep client idle-timers alive. See
+    stream_chat_completion_response for details.
     """
     # Reject non-JSON content types so a cross-origin HTML form with
     # enctype="text/plain" cannot qualify as a CORS "simple request" and silently
@@ -261,26 +339,14 @@ def handle_chat_completions():
     request_id = uuid.uuid4().hex[:12]
     logger.info("POST /v1/chat/completions request_id=%s model=%s prompt=%s", request_id, model_string, prompt[:80])
 
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     started_at = time.time()
-    response_body = None
-    runtime_error = None
-    try:
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        openai_output, model_response_text = PROVIDER_RUNNERS[provider](prompt, model_name, OUTPUT_DIR, timeout, request_id)
-        response_body = build_chat_completion_response(model_string, model_response_text, openai_output)
-        return jsonify(response_body)
-    except Exception as search_error:
-        runtime_error = sanitize_exception_for_log(search_error)
-        logger.error("Chat completion failed (request_id=%s): %s", request_id, runtime_error)
-        return make_error_response(f"internal error (request_id={request_id})", 500)
-    finally:
-        latency_seconds = time.time() - started_at
-        logger.info("Completed in %.1fs (request_id=%s provider=%s model=%s)", latency_seconds, request_id, provider, model_name)
-        try:
-            write_request_log(provider, model_name, prompt, body, response_body,
-                              latency_seconds, runtime_error, OUTPUT_DIR, started_at, request_id)
-        except Exception as log_error:
-            logger.error("write_request_log failed (request_id=%s): %s", request_id, log_error)
+    return Response(
+        stream_with_context(stream_chat_completion_response(
+            provider, model_name, model_string, prompt, body, timeout, request_id, started_at,
+        )),
+        mimetype="application/json",
+    )
 
 
 def handle_health():
