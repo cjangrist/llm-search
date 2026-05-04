@@ -10,6 +10,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -44,6 +45,14 @@ REDIRECT_PARALLELISM = 4
 # Curl exit codes we tolerate silently; anything else gets logged.
 # 0=success, 6=DNS resolve, 7=connect, 28=timeout, 35/56/60=TLS/recv issues.
 CURL_TOLERATED_EXIT_CODES = {0, 6, 7, 28, 35, 52, 56, 60}
+
+# Vertex grounding-redirect URLs gemini-cli embeds inline in its prose, in markdown-link
+# anchor form: `[anchor text](https://vertexaisearch.cloud.google.com/grounding-api-redirect/...)`.
+# Token alphabet is base64url + trailing `=` padding. We substitute these in the response
+# text so end-users see the resolved upstream URL, not a 250-char Vertex redirect.
+VERTEX_REDIRECT_PATTERN = re.compile(
+    r"https://vertexaisearch\.cloud\.google\.com/grounding-api-redirect/[A-Za-z0-9_-]+=*"
+)
 
 
 def resolve_redirect(uri):
@@ -304,15 +313,61 @@ def build_annotations(model_text, grounding_metadata, uri_resolution_map):
     return sorted(unique_annotations, key=lambda annotation: (annotation["start_index"], annotation["end_index"]))
 
 
-def build_openai_format(search_queries, grounding_blocks, should_resolve):
-    """Build OpenAI Responses API-style output from parsed Gemini grounding data."""
-    all_chunk_uris = [
+def collect_redirect_uris(grounding_blocks):
+    """Union of Vertex redirect URIs from grounding chunks AND inline-in-text matches.
+
+    grounding chunks come from `grounding_metadata.groundingChunks[].web.uri` — these
+    are the URIs annotations point at. Inline matches come from regex-scanning each
+    block's prose text, where gemini-cli emits redirect URLs as markdown-link targets
+    (`[anchor](https://vertexaisearch.cloud.google.com/grounding-api-redirect/...)`).
+    Pre-Round 9 we resolved only the chunk URIs, leaving inline ones in the response body.
+    """
+    chunk_uris = [
         chunk.get("web", {}).get("uri", "")
         for block in grounding_blocks
         for chunk in block["metadata"].get("groundingChunks", [])
     ]
-    uri_resolution_map = resolve_all_uris(all_chunk_uris) if should_resolve else {}
+    inline_uris = [
+        match
+        for block in grounding_blocks
+        for match in VERTEX_REDIRECT_PATTERN.findall(block["text"] or "")
+    ]
+    return list({uri for uri in chunk_uris + inline_uris if uri})
 
+
+def build_uri_resolution_map(grounding_blocks, should_resolve):
+    """Return {redirect_uri: resolved_url} for all redirects in grounding chunks + inline text.
+
+    `should_resolve=False` short-circuits to {} so the caller can opt out (e.g. --no-resolve).
+    Single resolve_all_uris call per request, regardless of how many places consume the map.
+    """
+    if not should_resolve:
+        return {}
+    return resolve_all_uris(collect_redirect_uris(grounding_blocks))
+
+
+def replace_inline_redirects_in_text(text, uri_resolution_map):
+    """Substitute every Vertex redirect URL in `text` with its resolved form (if known).
+
+    Annotation offsets are NOT updated — accepted drift on substituted spans. The
+    annotations point at prose-segment offsets which gemini chooses around (not inside)
+    markdown-link URLs, so collisions are rare in practice.
+    """
+    if not uri_resolution_map:
+        return text
+    return VERTEX_REDIRECT_PATTERN.sub(
+        lambda match: uri_resolution_map.get(match.group(0), match.group(0)),
+        text,
+    )
+
+
+def build_openai_format(search_queries, grounding_blocks, uri_resolution_map):
+    """Build OpenAI Responses API-style output from parsed Gemini grounding data.
+
+    `uri_resolution_map` is a precomputed {redirect_uri: resolved_url} dict — pass {} to
+    skip resolution entirely. Caller is responsible for invoking
+    `build_uri_resolution_map(grounding_blocks, should_resolve)` first.
+    """
     output = []
 
     combined_queries = list(search_queries)
@@ -350,6 +405,7 @@ def build_openai_format(search_queries, grounding_blocks, should_resolve):
                 joined_annotations.append(shifted)
             joined_parts.append(block_text)
             running_prefix_len += len(block_text) + (len(block_separator) if block_index < len(grounding_blocks) - 1 else 0)
+        joined_text = replace_inline_redirects_in_text(block_separator.join(joined_parts), uri_resolution_map)
         output.append({
             "type": "message",
             "status": "completed",
@@ -357,7 +413,7 @@ def build_openai_format(search_queries, grounding_blocks, should_resolve):
             "content": [
                 {
                     "type": "output_text",
-                    "text": block_separator.join(joined_parts),
+                    "text": joined_text,
                     "annotations": joined_annotations,
                 }
             ],
@@ -514,7 +570,9 @@ def run_search(prompt, model, output_dir, timeout, request_id=None, environment=
         logger.error("Gemini run failed: %s", failure_message[:240])
         raise RuntimeError(f"gemini provider failed: {failure_message}")
 
-    openai_output = build_openai_format(search_queries, grounding_blocks, True)
+    uri_resolution_map = build_uri_resolution_map(grounding_blocks, should_resolve=True)
+    model_response = replace_inline_redirects_in_text(model_response, uri_resolution_map)
+    openai_output = build_openai_format(search_queries, grounding_blocks, uri_resolution_map)
     with open(grounding_json_path, "w") as output_file:
         json.dump(openai_output, output_file, indent=2)
 
@@ -567,7 +625,9 @@ def main():
         logger.error("Gemini run failed: %s", failure_message[:240])
         sys.exit(2)
 
-    openai_output = build_openai_format(search_queries, grounding_blocks, not args.no_resolve)
+    uri_resolution_map = build_uri_resolution_map(grounding_blocks, should_resolve=not args.no_resolve)
+    model_response = replace_inline_redirects_in_text(model_response, uri_resolution_map)
+    openai_output = build_openai_format(search_queries, grounding_blocks, uri_resolution_map)
     with open(grounding_json_path, "w") as output_file:
         json.dump(openai_output, output_file, indent=2)
     logger.info("Grounding data saved to %s", grounding_json_path)
