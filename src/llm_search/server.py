@@ -10,16 +10,19 @@ Usage:
 """
 
 import argparse
+import glob
 import json
 import logging
 import os
+import queue
 import threading
 import time
+import traceback
 import uuid
 from datetime import datetime, timezone
 
 import sh
-from flask import Flask, Response, jsonify, request, stream_with_context
+from flask import Flask, Response, jsonify, request
 
 from llm_search.config import HOST, OUTPUT_DIR, PORT, PROVIDER_DEFAULTS
 from llm_search.logging_setup import setup_colorized_logging
@@ -227,77 +230,75 @@ def validate_request_body(body):
     return body, None
 
 
-HEARTBEAT_INTERVAL_SECONDS = 20
+HEARTBEAT_INTERVAL_SECONDS = 15
 
 
-def _run_provider_into_holder(provider, prompt, model_name, output_dir, timeout, request_id, model_string, result_holder):
-    """Worker target: run the provider, stash the openai-shaped response (or error) into result_holder."""
-    try:
-        openai_output, model_response_text = PROVIDER_RUNNERS[provider](prompt, model_name, output_dir, timeout, request_id)
-        result_holder["body"] = build_chat_completion_response(model_string, model_response_text, openai_output)
-    except Exception as search_error:
-        result_holder["error"] = search_error
-        result_holder["error_log"] = sanitize_exception_for_log(search_error)
+def run_provider_in_thread(provider, model_name, prompt, model_string, request_id, timeout):
+    """Run the provider CLI in a background thread, return (Thread, Queue) for the caller to poll.
 
-
-def _build_streamed_error_payload(request_id):
-    """Error envelope yielded mid-stream when the upstream call fails after headers were flushed.
-
-    HTTP status is already 200 by the time we know the upstream failed (the heartbeat
-    flushed headers immediately to keep the client's idle-timer alive). Emit an
-    OpenAI-compatible `error` envelope in the body — clients that parse `error.code` /
-    `error.message` (the OpenAI SDK, LiteLLM, etc.) surface it the same way they would
-    for a 5xx response.
+    The CLI subprocess can take 100+ seconds for complex multi-search prompts. Upstream
+    proxies (Cloudflare ~100s) close the connection with HTTP 524 if no body bytes are
+    written. Doing the work in a thread lets the request handler interleave heartbeat
+    bytes onto the wire while the CLI runs.
     """
-    return {
-        "error": {
-            "message": f"internal error (request_id={request_id})",
-            "type": "internal_error",
-            "param": None,
-            "code": None,
-        }
-    }
+    result_queue = queue.Queue(maxsize=1)
+
+    def worker():
+        try:
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            openai_output, model_response_text = PROVIDER_RUNNERS[provider](
+                prompt, model_name, OUTPUT_DIR, timeout, request_id
+            )
+            payload = build_chat_completion_response(model_string, model_response_text, openai_output)
+            result_queue.put(("ok", payload))
+        except Exception as worker_error:
+            result_queue.put(("err", worker_error))
+
+    worker_thread = threading.Thread(target=worker, name=f"chat-{request_id}", daemon=True)
+    worker_thread.start()
+    return worker_thread, result_queue
 
 
-def stream_chat_completion_response(provider, model_name, model_string, prompt, body, timeout, request_id, started_at):
-    """Generator: yield whitespace heartbeat every HEARTBEAT_INTERVAL_SECONDS while upstream runs, then the final JSON.
+def stream_response_with_heartbeat(provider, model_name, prompt, request_body, model_string, request_id, timeout):
+    """Yield " " every 15s while the provider CLI runs in a thread, then yield the final JSON.
 
-    Why this exists: gemini=80s and codex=121s passed live; claude=145s and kimi=150s
-    failed for the user. Server-side response was well-formed in every case — the gap
-    was a client-side idle-timeout cutting the connection somewhere in [121s, 145s].
-    By flushing response headers immediately and yielding a single space byte every
-    HEARTBEAT_INTERVAL_SECONDS, any client measuring read-idle-timeout on the response
-    socket sees activity well under common 60s/120s/180s thresholds. The final body is
-    valid JSON regardless — leading whitespace is permitted by RFC 8259.
+    Whitespace is a valid JSON prefix — any conformant client buffers the stream and parses
+    once EOF arrives. The leading whitespace keeps the TCP connection active so upstream
+    proxies (Cloudflare's ~100s idle timeout) don't HTTP 524 the request before we finish.
+
+    The status code is fixed at 200 once the first whitespace byte goes out — proxies have
+    already committed to the response. Provider failures land in the body as
+    `{"error": {...}}` matching make_error_response's shape so OpenAI clients parse it
+    via the body, not the status code.
     """
-    result_holder = {}
-    worker = threading.Thread(
-        target=_run_provider_into_holder,
-        args=(provider, prompt, model_name, OUTPUT_DIR, timeout, request_id, model_string, result_holder),
-        daemon=True,
-    )
-    worker.start()
+    started_at = time.time()
+    _worker_thread, result_queue = run_provider_in_thread(provider, model_name, prompt, model_string, request_id, timeout)
+
     while True:
-        worker.join(timeout=HEARTBEAT_INTERVAL_SECONDS)
-        if not worker.is_alive():
+        try:
+            kind, value = result_queue.get(timeout=HEARTBEAT_INTERVAL_SECONDS)
             break
-        yield b" "
+        except queue.Empty:
+            yield " "
 
-    response_body = result_holder.get("body")
-    runtime_error_log = result_holder.get("error_log")
-    if response_body is None:
-        logger.error("Chat completion failed (request_id=%s): %s", request_id, runtime_error_log)
-        response_body_for_client = _build_streamed_error_payload(request_id)
+    response_body, runtime_error = None, None
+    if kind == "ok":
+        response_body = value
+        yield json.dumps(response_body)
     else:
-        response_body_for_client = response_body
-
-    yield json.dumps(response_body_for_client).encode("utf-8")
+        runtime_error = sanitize_exception_for_log(value)
+        logger.error("Chat completion failed (request_id=%s): %s", request_id, runtime_error)
+        yield json.dumps({"error": {
+            "message": f"internal error (request_id={request_id})",
+            "type": "invalid_request_error", "param": None, "code": None,
+        }})
 
     latency_seconds = time.time() - started_at
-    logger.info("Completed in %.1fs (request_id=%s provider=%s model=%s)", latency_seconds, request_id, provider, model_name)
+    logger.info("Completed in %.1fs (request_id=%s provider=%s model=%s)",
+                latency_seconds, request_id, provider, model_name)
     try:
-        write_request_log(provider, model_name, prompt, body, response_body,
-                          latency_seconds, runtime_error_log, OUTPUT_DIR, started_at, request_id)
+        write_request_log(provider, model_name, prompt, request_body, response_body,
+                          latency_seconds, runtime_error, OUTPUT_DIR, started_at, request_id)
     except Exception as log_error:
         logger.error("write_request_log failed (request_id=%s): %s", request_id, log_error)
 
@@ -310,9 +311,9 @@ def handle_chat_completions():
         messages (list): OpenAI-format messages array
         timeout (int, optional): CLI timeout in seconds
 
-    Long-running upstream calls (>=120s for some providers) are streamed with a
-    whitespace heartbeat to keep client idle-timers alive. See
-    stream_chat_completion_response for details.
+    Response is streamed: a whitespace heartbeat is written every
+    HEARTBEAT_INTERVAL_SECONDS while the upstream CLI runs, followed by the final
+    JSON body. Whitespace prefix is valid JSON; any conformant client parses correctly.
     """
     # Reject non-JSON content types so a cross-origin HTML form with
     # enctype="text/plain" cannot qualify as a CORS "simple request" and silently
@@ -339,12 +340,8 @@ def handle_chat_completions():
     request_id = uuid.uuid4().hex[:12]
     logger.info("POST /v1/chat/completions request_id=%s model=%s prompt=%s", request_id, model_string, prompt[:80])
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    started_at = time.time()
     return Response(
-        stream_with_context(stream_chat_completion_response(
-            provider, model_name, model_string, prompt, body, timeout, request_id, started_at,
-        )),
+        stream_response_with_heartbeat(provider, model_name, prompt, body, model_string, request_id, timeout),
         mimetype="application/json",
     )
 
