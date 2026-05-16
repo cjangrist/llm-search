@@ -9,10 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ARG BUN_VERSION=1.3.13
 RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash -s -- bun-v${BUN_VERSION}
 
-# Install CLIs globally via npm (pinned to match host versions as of 2026-05-04)
-ARG CLAUDE_CODE_VERSION=2.1.126
-ARG CODEX_VERSION=0.128.0
-ARG GEMINI_CLI_VERSION=0.40.1
+# Install CLIs globally via npm (pinned to match host versions as of 2026-05-16)
+ARG CLAUDE_CODE_VERSION=2.1.143
+ARG CODEX_VERSION=0.130.0
+ARG GEMINI_CLI_VERSION=0.42.0
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     "@openai/codex@${CODEX_VERSION}" \
     "@google/gemini-cli@${GEMINI_CLI_VERSION}"
@@ -36,7 +36,7 @@ RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | env UV_INSTALL_DI
 ENV UV_TOOL_DIR=/opt/uv-tools
 ENV UV_TOOL_BIN_DIR=/usr/local/bin
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
-ARG KIMI_CLI_VERSION=1.41.0
+ARG KIMI_CLI_VERSION=1.44.0
 RUN uv tool install "kimi-cli==${KIMI_CLI_VERSION}" --python 3.12 \
     && chmod -R a+rX /opt/uv-tools /opt/uv-python
 
