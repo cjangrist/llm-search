@@ -56,7 +56,14 @@ VERTEX_REDIRECT_PATTERN = re.compile(
 
 
 def resolve_redirect(uri):
-    """Follow a Vertex grounding redirect to get the actual URL via curl."""
+    """Follow a Vertex grounding redirect to get the actual URL via curl.
+
+    The `-w "%{url_effective}"` write-out flushes the resolved URL to stdout BEFORE curl
+    returns its exit code. Google's grounding CDN routinely serves the 302 over HTTP/2
+    and then RST_STREAMs the connection (curl exit 92) — that's benign: we already have
+    the Location. Read stdout from the sh exception too, so a non-tolerated exit no
+    longer drops a perfectly good resolution.
+    """
     if not uri or not uri.startswith(VERTEX_REDIRECT_PREFIX):
         return uri
     try:
@@ -68,13 +75,18 @@ def resolve_redirect(uri):
             _ok_code=list(CURL_TOLERATED_EXIT_CODES),
         )
         resolved = str(result).strip()
-        return resolved if resolved and resolved != uri else uri
     except sh.ErrorReturnCode as curl_error:
-        logger.warning("resolve_redirect curl unexpected exit %d for %s", curl_error.exit_code, uri[:120])
-        return uri
+        stdout_bytes = getattr(curl_error, "stdout", b"") or b""
+        resolved = stdout_bytes.decode("utf-8", errors="replace").strip()
+        if not resolved or resolved == uri:
+            logger.warning("resolve_redirect curl exit %d, no usable url for %s", curl_error.exit_code, uri[:120])
+            return uri
+        logger.debug("resolve_redirect curl exit %d but recovered url for %s -> %s",
+                     curl_error.exit_code, uri[:80], resolved[:80])
     except Exception as resolve_error:
         logger.warning("resolve_redirect failed for %s: %s", uri[:120], resolve_error)
         return uri
+    return resolved if resolved and resolved != uri else uri
 
 
 def resolve_all_uris(uri_list):
