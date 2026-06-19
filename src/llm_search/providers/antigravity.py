@@ -5,13 +5,22 @@ host's logged-in Google account OAuth (Google AI Pro/Ultra subscription) — `ag
 has no API-key auth path (upstream issue #78), so it always authenticates via the
 stored OAuth credentials under ~/.gemini/antigravity-cli/.
 
-Two CLI quirks drive the implementation:
+Three CLI quirks drive the implementation:
   1. `agy --print` gates its stdout emission on isatty() — piped/redirected stdout
      yields zero bytes (issues #76/#408/#318). We run it under a pseudo-terminal
      (sh `_tty_out=True`) so the gate passes, exactly like the gemini provider.
   2. There is no structured/JSON output mode, so citations are parsed from the
      rendered markdown answer, where sources appear as `[title](redirect_url)` with
      Vertex grounding-redirect URLs — the same format gemini.py already resolves.
+  3. agy has no system-prompt flag (upstream issue #50 is open) and ignores
+     GEMINI_SYSTEM_MD, so we cannot inject the shared grounding prompt the way claude
+     (`--system-prompt`) and codex (`--config instructions=`) do. The only headless
+     channel agy honors is a "Rules" context file in its workspace Customizations Root
+     (`.agents/AGENTS.md`, relative to the cwd); agy concatenates it into the system
+     prompt of every request (host-verified 2026-06-19). We write load_system_prompt()
+     there so all four providers share one grounding prompt. agy APPENDS this to its
+     baked coding-assistant persona (it cannot be replaced), so the file leads with a
+     header that re-scopes agy from "build web apps" to search-grounded research.
 
 Usage: python -m llm_search.providers.antigravity "your prompt" [-m model] [--raw-dir /tmp]
 """
@@ -45,6 +54,7 @@ from llm_search.providers.subprocess_safety import (
     build_sanitized_environment,
     kill_subprocess_tree_on_done,
 )
+from llm_search.prompts import load_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +86,40 @@ def build_augmented_prompt(prompt):
         "Use web search to answer the following and cite every claim with its source "
         f'URL in markdown link form. Question: "{prompt}"'
     )
+
+
+# agy's workspace "Rules" file (relative to the cwd Customizations Root). agy concatenates
+# this into every request's system prompt. AGENTS.md under `.agents/` is the path agy's own
+# baked system prompt documents as the Workspace Customizations Root (host-verified).
+AGENT_RULES_RELATIVE_PATH = os.path.join(".agents", "AGENTS.md")
+# Leads the injected grounding prompt: agy's baked persona is a web-app coding assistant, and
+# the rules only APPEND (cannot replace), so we explicitly re-scope it to research first.
+AGENT_RULES_HEADER = (
+    "# Operating Mode for This Workspace (MANDATORY — overrides your defaults)\n\n"
+    "You are NOT building software, web apps, or artifacts in this workspace. For every "
+    "request here you operate strictly as the search-grounded research assistant defined "
+    "below. These rules take precedence over your default coding-assistant behavior, "
+    "design/aesthetics guidance, and artifact conventions: do not scaffold projects, write "
+    "code files, or create artifacts — directly answer the user's question, grounded in web "
+    "search, exactly as specified.\n\n"
+    "---\n\n"
+)
+
+
+def write_agent_rules_file(workspace_dir):
+    """Inject the shared grounding system prompt into agy via its workspace Rules file.
+
+    This is agy's analogue of claude's `--system-prompt` and codex's `--config instructions=`
+    — all three inject the same load_system_prompt() so the four providers share one grounding
+    prompt. agy exposes no flag for it, so we use the `.agents/AGENTS.md` context file it does
+    honor. Returns the path written.
+    """
+    rules_path = os.path.join(workspace_dir, AGENT_RULES_RELATIVE_PATH)
+    os.makedirs(os.path.dirname(rules_path), mode=0o700, exist_ok=True)
+    with open(rules_path, "w") as rules_file:
+        rules_file.write(AGENT_RULES_HEADER + load_system_prompt() + "\n")
+    logger.debug("Wrote agy grounding rules file: %s", rules_path)
+    return rules_path
 
 
 def build_agy_args(augmented_prompt, model, log_file_path, print_timeout_seconds):
@@ -240,6 +284,7 @@ def run_search(prompt, model, output_dir, timeout, request_id=None, environment=
     parent_sandbox = sandbox_dir if sandbox_dir is not None else ANTIGRAVITY_SANDBOX_DIR
     request_sandbox = os.path.join(parent_sandbox, request_id)
     os.makedirs(request_sandbox, mode=0o700, exist_ok=True)
+    write_agent_rules_file(request_sandbox)
 
     # agy is OAuth-only; strip credential-shaped env vars so a tool-escape inside the agent
     # cannot exfiltrate the other providers' keys from the shared gunicorn process.
