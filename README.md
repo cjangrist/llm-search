@@ -5,9 +5,9 @@
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-ready-blue?logo=docker)](https://docker.com/)
 
-> **OpenAI-compatible Chat Completions API with web search grounding via Claude Code, Codex, Kimi, and Gemini CLIs.**
+> **OpenAI-compatible Chat Completions API with web search grounding via Claude Code, Codex, Kimi, Gemini, and Grok CLIs.**
 
-LLM Search provides a unified interface to several leading LLM CLI providers—**Claude Code**, **OpenAI Codex**, **Kimi** (MoonshotAI), and **Gemini**—each with built-in web search capabilities. Instead of calling raw APIs that lack search, we leverage the CLIs' Terms-of-Service-compliant search tools to deliver grounded, cited answers through a standard OpenAI-compatible interface.
+LLM Search provides a unified interface to several leading LLM CLI providers—**Claude Code**, **OpenAI Codex**, **Kimi** (MoonshotAI), **Gemini**, and **Grok** (xAI)—each with built-in web search capabilities. Instead of calling raw APIs that lack search, we leverage the CLIs' Terms-of-Service-compliant search tools to deliver grounded, cited answers through a standard OpenAI-compatible interface.
 
 > **Note:** the `gemini` provider is served through Google's **Antigravity CLI** (`agy`). Google retired the standalone `gemini-cli` for consumer accounts, so `gemini/*` requests run through `agy` (OAuth, your Google AI subscription) pinned to a Gemini model — existing clients keep working unchanged.
 
@@ -25,6 +25,7 @@ claude          # Claude Code — sign in
 codex auth login
 kimi login      # or set KIMI_API_KEY
 agy             # Gemini — sign in with your Google account (OAuth); powers the gemini provider
+grok login      # Grok (xAI) — sign in with your X/Grok account (OAuth); or set XAI_API_KEY
 
 # 3. Build and run (HOST_UID matches container user to your host for cred mounts)
 HOST_UID=$(id -u) docker compose up -d --build
@@ -103,6 +104,7 @@ curl -X POST http://localhost:8041/v1/chat/completions \
 | `codex` | `codex/gpt-5.5` | OpenAI Codex with web search |
 | `kimi` | `kimi` | Kimi (MoonshotAI) with web search |
 | `gemini` | `gemini` | Google web search via the Antigravity CLI (`agy`) on your subscription OAuth; pinned to a Gemini model (the model field is ignored) |
+| `grok` | `grok` | xAI Grok web search via the Grok CLI (`grok`) on your subscription OAuth; grounding prompt set verbatim via `--system-prompt-override` |
 
 **Response with citations:**
 
@@ -154,7 +156,8 @@ curl http://localhost:8041/providers
 #   "claude": {"default_model": "haiku", "default_timeout": 290},
 #   "codex": {"default_model": "gpt-5.5", "default_timeout": 290},
 #   "kimi": {"default_model": "", "default_timeout": 290},
-#   "gemini": {"default_model": "Gemini 3.5 Flash (Low)", "default_timeout": 290}
+#   "gemini": {"default_model": "Gemini 3.5 Flash (Low)", "default_timeout": 290},
+#   "grok": {"default_model": "grok-build", "default_timeout": 290}
 # }
 ```
 
@@ -174,6 +177,9 @@ python -m llm_search.providers.kimi "Bitcoin price today" -v
 
 # Gemini (the agy integration; standalone debug entry point)
 python -m llm_search.providers.antigravity "Bitcoin price today" -m "Gemini 3.5 Flash (Low)" -v
+
+# Grok (xAI)
+python -m llm_search.providers.grok "Latest AI news" -m grok-build -v
 ```
 
 ---
@@ -239,6 +245,7 @@ python -m llm_search.providers.antigravity "Bitcoin price today" -m "Gemini 3.5 
    - **Codex**: Captures `RUST_LOG=trace` SSE events + JSONL fallback
    - **Gemini** (via `agy`): runs `agy --print` under a PTY, parses markdown citations, resolves Vertex AI redirect URIs
    - **Kimi**: Parses `stream-json` events, extracts web-search sources
+   - **Grok** (xAI): runs `grok -p --output-format json`, injects the grounding prompt via `--system-prompt-override`, parses inline markdown citations
 
 4. **OpenAI Compatibility**
    - Full Chat Completions API spec compliance
@@ -272,6 +279,7 @@ python -m llm_search.providers.antigravity "Bitcoin price today" -m "Gemini 3.5 
 │       ├── kimi.py              # Kimi (MoonshotAI) integration
 │       ├── kimi_parsing.py      # Kimi stream-json parsing
 │       ├── antigravity.py       # Antigravity CLI (agy) integration — backs the gemini provider
+│       ├── grok.py              # Grok CLI (xAI) integration
 │       ├── vertex_redirect.py   # Shared Vertex grounding-redirect resolver
 │       └── subprocess_safety.py # Subprocess-tree cleanup + env sanitization
 ├── scripts/                     # Operational scripts

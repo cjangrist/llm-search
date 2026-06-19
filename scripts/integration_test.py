@@ -1,7 +1,7 @@
 """Integration tests for the llm-search Docker service.
 
 Tests /health, /providers, and a live search query against each provider
-(claude, codex, kimi, gemini) via the OpenAI-compatible
+(claude, codex, kimi, gemini, grok) via the OpenAI-compatible
 /v1/chat/completions endpoint.
 """
 
@@ -66,7 +66,7 @@ def test_providers(session: requests.Session) -> bool:
         response = session.get(f"{BASE_URL}/providers", timeout=10)
         assert response.status_code == 200, f"HTTP {response.status_code}"
         data = response.json()
-        expected_providers = {"claude", "codex", "kimi", "gemini"}
+        expected_providers = {"claude", "codex", "kimi", "gemini", "grok"}
         missing = expected_providers - set(data.keys())
         assert not missing, f"missing providers: {missing}"
         for provider_name, provider_defaults in data.items():
@@ -135,8 +135,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--providers",
         nargs="+",
-        default=["claude", "codex", "kimi", "gemini"],
-        choices=["claude", "codex", "kimi", "gemini"],
+        default=["claude", "codex", "kimi", "gemini", "grok"],
+        choices=["claude", "codex", "kimi", "gemini", "grok"],
         help="Which providers to test (default: all)",
     )
     return parser.parse_args()

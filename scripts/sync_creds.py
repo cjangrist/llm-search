@@ -28,6 +28,10 @@ CREDENTIAL_PAIRS = [
     ("/mnt/creds/kimi/credentials/kimi-code.json", f"{CONTAINER_HOME}/.kimi/credentials/kimi-code.json"),
     # Antigravity (agy CLI) OAuth token — lives under the same ~/.gemini mount.
     ("/mnt/creds/gemini/antigravity-cli/antigravity-oauth-token", f"{CONTAINER_HOME}/.gemini/antigravity-cli/antigravity-oauth-token"),
+    # Grok (xAI CLI) — OAuth session token + config + model cache under ~/.grok.
+    ("/mnt/creds/grok/auth.json", f"{CONTAINER_HOME}/.grok/auth.json"),
+    ("/mnt/creds/grok/config.toml", f"{CONTAINER_HOME}/.grok/config.toml"),
+    ("/mnt/creds/grok/models_cache.json", f"{CONTAINER_HOME}/.grok/models_cache.json"),
 ]
 
 TOKEN_FILES = {
@@ -125,6 +129,32 @@ def extract_antigravity_expiry(filepath):
         return 0
 
 
+def extract_grok_expiry(filepath):
+    """Extract the latest token expiry (ISO8601 expires_at -> ms) from Grok auth.json.
+
+    Grok keys each credential by issuer URL ("https://auth.x.ai::<uuid>"); each entry carries
+    an `expires_at` RFC3339 timestamp. Return the max across entries (ms epoch). auth.json's
+    basename collides with codex, so select_expiry_extractor routes by path to reach this.
+    """
+    try:
+        with open(filepath) as credential_file:
+            data = json.load(credential_file)
+        import re
+        from datetime import datetime
+        expiries = []
+        for entry in data.values():
+            if not isinstance(entry, dict):
+                continue
+            raw_expiry = entry.get("expires_at", "")
+            if not raw_expiry:
+                continue
+            normalized = re.sub(r"(\.\d{6})\d+", r"\1", raw_expiry.replace("Z", "+00:00"))
+            expiries.append(int(datetime.fromisoformat(normalized).timestamp() * 1000))
+        return max(expiries) if expiries else 0
+    except (json.JSONDecodeError, OSError, KeyError, ValueError):
+        return 0
+
+
 EXPIRY_EXTRACTORS = {
     ".credentials.json": extract_claude_expiry,
     "auth.json": extract_codex_expiry,
@@ -134,14 +164,24 @@ EXPIRY_EXTRACTORS = {
 }
 
 
+def select_expiry_extractor(container_path):
+    """Pick the expiry extractor for a container cred path.
+
+    `auth.json` is ambiguous — both codex (~/.codex) and grok (~/.grok) use that basename with
+    different JSON shapes — so disambiguate by directory before the basename fallback.
+    """
+    if container_path.endswith("/.grok/auth.json"):
+        return extract_grok_expiry
+    return EXPIRY_EXTRACTORS.get(os.path.basename(container_path))
+
+
 def is_token_file(filepath):
     return os.path.basename(filepath) in TOKEN_FILES
 
 
 def host_token_is_fresher(host_path, container_path):
     """Return True if the host token has a later expiry than the container token."""
-    basename = os.path.basename(container_path)
-    extractor = EXPIRY_EXTRACTORS.get(basename)
+    extractor = select_expiry_extractor(container_path)
     if extractor is None:
         return True
 

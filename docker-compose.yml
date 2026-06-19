@@ -23,4 +23,5 @@ services:
       - ~/.codex:/mnt/creds/codex:ro
       - ~/.gemini:/mnt/creds/gemini:ro
       - ~/.kimi:/mnt/creds/kimi:ro
+      - ~/.grok:/mnt/creds/grok:ro
       - ~/logs/llm-search:/tmp/llm-search/logs

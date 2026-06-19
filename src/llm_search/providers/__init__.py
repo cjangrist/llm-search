@@ -1,6 +1,6 @@
 """Provider registry mapping provider names to runner functions."""
 
-from llm_search.providers import antigravity, claude, codex, kimi
+from llm_search.providers import antigravity, claude, codex, grok, kimi
 
 PROVIDER_RUNNERS = {
     "claude": claude.run_search,
@@ -10,4 +10,5 @@ PROVIDER_RUNNERS = {
     # integration lives in antigravity.py (it is not exposed as its own provider).
     "gemini": antigravity.run_search_as_gemini,
     "kimi": kimi.run_search,
+    "grok": grok.run_search,
 }

@@ -9,11 +9,11 @@ smart_sync() {
     python3 /app/scripts/sync_creds.py
     # Fix ownership on any newly synced files. ~/.gemini holds agy's antigravity-cli
     # app-data + OAuth token; the others are claude/codex/kimi creds.
-    chown -R llmsearch:llmsearch "$UHOME/.claude" "$UHOME/.codex" "$UHOME/.gemini" "$UHOME/.kimi" 2>/dev/null
+    chown -R llmsearch:llmsearch "$UHOME/.claude" "$UHOME/.codex" "$UHOME/.gemini" "$UHOME/.kimi" "$UHOME/.grok" 2>/dev/null
 }
 
 # Pre-create writable dirs ($UHOME/.gemini/antigravity-cli is agy's app-data + OAuth token dir)
-for cli_dir in "$UHOME/.claude" "$UHOME/.codex" "$UHOME/.gemini" "$UHOME/.gemini/antigravity-cli" "$UHOME/.kimi" "$UHOME/.kimi/credentials"; do
+for cli_dir in "$UHOME/.claude" "$UHOME/.codex" "$UHOME/.gemini" "$UHOME/.gemini/antigravity-cli" "$UHOME/.kimi" "$UHOME/.kimi/credentials" "$UHOME/.grok"; do
     mkdir -p "$cli_dir"
     chown llmsearch:llmsearch "$cli_dir"
 done
@@ -53,6 +53,13 @@ KIMI_SANDBOX_DIR="${KIMI_SANDBOX_DIR:-/tmp/kimi-sandbox}"
 mkdir -p "$KIMI_SANDBOX_DIR"
 chown -R llmsearch:llmsearch "$KIMI_SANDBOX_DIR"
 
+# Create the grok sandbox parent dir. The grok provider runs `grok -p` with its --cwd and
+# per-request --leader-socket inside a subdir of this (absolute paths required), cleaned up
+# (moved to .trash) by the provider after each request.
+GROK_SANDBOX_DIR="${GROK_SANDBOX_DIR:-/tmp/grok-sandbox}"
+mkdir -p "$GROK_SANDBOX_DIR"
+chown -R llmsearch:llmsearch "$GROK_SANDBOX_DIR"
+
 # Initial sync
 smart_sync
 
@@ -63,7 +70,8 @@ smart_sync
 (gosu llmsearch timeout 15 claude --version >/dev/null 2>&1;
  gosu llmsearch timeout 15 codex --version >/dev/null 2>&1;
  gosu llmsearch timeout 15 kimi --version >/dev/null 2>&1;
- gosu llmsearch timeout 15 agy --version >/dev/null 2>&1) &
+ gosu llmsearch timeout 15 agy --version >/dev/null 2>&1;
+ gosu llmsearch timeout 15 grok --version >/dev/null 2>&1) &
 
 # Drop privileges and run CMD
 exec gosu llmsearch "$@"

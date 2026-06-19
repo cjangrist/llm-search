@@ -42,6 +42,16 @@ RUN uv tool install "kimi-cli==${KIMI_CLI_VERSION}" --python 3.12 \
 RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin \
     && agy --version
 
+# Install Grok CLI (xAI) — browser/OAuth subscription login (no API key). The official
+# installer pulls a pinned prebuilt static binary; install it under a world-readable /opt
+# tree (HOME=/opt/grok) and symlink onto PATH (GROK_BIN_DIR) so the non-root llmsearch user
+# can run it. We pin the version and disable the self-updater (ENV below + --no-auto-update).
+ARG GROK_VERSION=0.2.56
+RUN HOME=/opt/grok GROK_BIN_DIR=/usr/local/bin \
+      bash -c "curl -fsSL https://x.ai/cli/install.sh | bash -s ${GROK_VERSION}" \
+    && chmod -R a+rX /opt/grok \
+    && grok --version
+
 # Install the llm_search package
 COPY pyproject.toml .
 COPY src/ src/
@@ -64,6 +74,8 @@ ENV LLM_SEARCH_PORT=8080
 ENV NODE_COMPILE_CACHE=/tmp/node-compile-cache
 ENV ANTIGRAVITY_SANDBOX_DIR=/tmp/antigravity-sandbox
 ENV KIMI_SANDBOX_DIR=/tmp/kimi-sandbox
+ENV GROK_SANDBOX_DIR=/tmp/grok-sandbox
+ENV GROK_DISABLE_AUTOUPDATER=1
 
 EXPOSE 8080
 

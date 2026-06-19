@@ -46,7 +46,7 @@ def parse_model_field(model_string):
     if not model_string:
         return None, (
             "model must be in format 'provider/model' or just 'provider' "
-            "(e.g. 'codex', 'claude/haiku', 'gemini', 'kimi')"
+            "(e.g. 'codex', 'claude/haiku', 'gemini', 'kimi', 'grok')"
         )
     if "/" not in model_string:
         if model_string in PROVIDER_RUNNERS:
@@ -70,6 +70,10 @@ PROVIDER_ARTEFACT_TEMPLATES = {
     # gemini is now served via agy (antigravity backend), so it writes antigravity_* artefacts.
     "gemini": ["antigravity_raw_{rid}.json", "antigravity_search_{rid}.json"],
     "kimi": ["kimi_raw_{rid}.json", "kimi_search_{rid}.json", "kimi_stderr_{rid}.log"],
+    # grok_stderr_{rid}.log holds grok CLI diagnostics (update/auth status, errors); it does
+    # not carry the bearer token (we never enable --debug), so unlike codex_trace it is safe
+    # to embed when LLM_SEARCH_LOG_PROMPTS=1.
+    "grok": ["grok_raw_{rid}.json", "grok_search_{rid}.json", "grok_stderr_{rid}.log"],
 }
 
 

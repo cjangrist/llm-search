@@ -21,6 +21,7 @@ PROVIDER_DEFAULTS = {
     "codex": {"model": "gpt-5.5", "timeout": 290},
     "gemini": {"model": "Gemini 3.5 Flash (Low)", "timeout": 290},
     "kimi": {"model": "", "timeout": 290},
+    "grok": {"model": "grok-build", "timeout": 290},
 }
 
 # --- Claude ---
@@ -50,3 +51,11 @@ ANTIGRAVITY_BINARY = os.getenv("ANTIGRAVITY_BINARY", "agy")
 ANTIGRAVITY_DEFAULT_MODEL = os.getenv("ANTIGRAVITY_MODEL", "")
 ANTIGRAVITY_DEFAULT_OUTPUT_DIR = os.getenv("ANTIGRAVITY_OUTPUT_DIR", "/tmp")
 ANTIGRAVITY_SANDBOX_DIR = os.getenv("ANTIGRAVITY_SANDBOX_DIR", "/tmp/antigravity-sandbox")
+
+# --- Grok (xAI) — headless `grok -p`; browser/OAuth subscription login stored in
+# ~/.grok/auth.json (no API key). The grounding system prompt is injected verbatim via
+# `--system-prompt-override` (true replacement, unlike `--rules` which only appends). ---
+GROK_BINARY = os.getenv("GROK_BINARY", "grok")
+GROK_DEFAULT_MODEL = os.getenv("GROK_MODEL", "grok-build")
+GROK_DEFAULT_OUTPUT_DIR = os.getenv("GROK_OUTPUT_DIR", "/tmp")
+GROK_SANDBOX_DIR = os.getenv("GROK_SANDBOX_DIR", "/tmp/grok-sandbox")
