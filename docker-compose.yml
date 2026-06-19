@@ -1,6 +1,11 @@
 services:
   llm-search:
-    build: .
+    build:
+      context: .
+      args:
+        # Match the container user to the host UID so bind-mounted creds + the
+        # logs mount are read/writable. Defaults to 1000 when HOST_UID is unset.
+        HOST_UID: ${HOST_UID:-1000}
     restart: unless-stopped
     ports:
       # Bind to localhost only — anyone reachable on 0.0.0.0 could drain provider quotas

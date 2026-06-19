@@ -1,21 +1,17 @@
 FROM node:22-bookworm@sha256:9059d9d7db987b86299e052ff6630cd95e5a770336967c21110e53289a877433
 
-# System deps (includes ripgrep to skip gemini-cli's slow auto-download)
+# System deps (ripgrep is used by kimi-cli; avoids its slow auto-download)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv curl git ca-certificates gosu ripgrep unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Bun for faster gemini CLI runtime — pinned version (the install script honors BUN_VERSION)
-ARG BUN_VERSION=1.3.13
-RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash -s -- bun-v${BUN_VERSION}
-
-# Install CLIs globally via npm (pinned to match host versions as of 2026-06-03)
+# Install CLIs globally via npm (pinned to match host versions as of 2026-06-03).
+# gemini-cli was removed: Google retired it for consumer accounts (IneligibleTierError) —
+# the gemini provider is now served via the Antigravity CLI (agy), installed below.
 ARG CLAUDE_CODE_VERSION=2.1.162
 ARG CODEX_VERSION=0.136.0
-ARG GEMINI_CLI_VERSION=0.45.0
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
-    "@openai/codex@${CODEX_VERSION}" \
-    "@google/gemini-cli@${GEMINI_CLI_VERSION}"
+    "@openai/codex@${CODEX_VERSION}"
 
 # Python venv so pip doesn't complain about externally-managed
 RUN python3 -m venv /opt/venv
@@ -40,6 +36,12 @@ ARG KIMI_CLI_VERSION=1.46.0
 RUN uv tool install "kimi-cli==${KIMI_CLI_VERSION}" --python 3.12 \
     && chmod -R a+rX /opt/uv-tools /opt/uv-python
 
+# Install Antigravity CLI (agy) — OAuth-only; drives the host's Google AI subscription
+# (no API key). The installer fetches the current release and self-updates in the
+# background like on the host; install system-wide so the non-root llmsearch user can run it.
+RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin \
+    && agy --version
+
 # Install the llm_search package
 COPY pyproject.toml .
 COPY src/ src/
@@ -60,8 +62,7 @@ RUN chmod +x /entrypoint.sh
 ENV LLM_SEARCH_OUTPUT_DIR=/tmp/llm-search
 ENV LLM_SEARCH_PORT=8080
 ENV NODE_COMPILE_CACHE=/tmp/node-compile-cache
-ENV GEMINI_SANDBOX_DIR=/tmp/gemini-sandbox
-ENV GEMINI_CLI_TRUST_WORKSPACE=true
+ENV ANTIGRAVITY_SANDBOX_DIR=/tmp/antigravity-sandbox
 ENV KIMI_SANDBOX_DIR=/tmp/kimi-sandbox
 
 EXPOSE 8080

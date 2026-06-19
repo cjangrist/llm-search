@@ -5,9 +5,11 @@
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-ready-blue?logo=docker)](https://docker.com/)
 
-> **OpenAI-compatible Chat Completions API with web search grounding via Claude Code, Codex, and Gemini CLIs.**
+> **OpenAI-compatible Chat Completions API with web search grounding via Claude Code, Codex, Kimi, and Gemini CLIs.**
 
-LLM Search provides a unified interface to three leading LLM CLI providers—**Claude Code**, **OpenAI Codex**, and **Google Gemini**—each with built-in web search capabilities. Instead of calling raw APIs that lack search, we leverage the CLIs' Terms-of-Service-compliant search tools to deliver grounded, cited answers through a standard OpenAI-compatible interface.
+LLM Search provides a unified interface to several leading LLM CLI providers—**Claude Code**, **OpenAI Codex**, **Kimi** (MoonshotAI), and **Gemini**—each with built-in web search capabilities. Instead of calling raw APIs that lack search, we leverage the CLIs' Terms-of-Service-compliant search tools to deliver grounded, cited answers through a standard OpenAI-compatible interface.
+
+> **Note:** the `gemini` provider is served through Google's **Antigravity CLI** (`agy`). Google retired the standalone `gemini-cli` for consumer accounts, so `gemini/*` requests run through `agy` (OAuth, your Google AI subscription) pinned to a Gemini model — existing clients keep working unchanged.
 
 ---
 
@@ -19,17 +21,18 @@ git clone https://github.com/yourusername/llm-search.git
 cd llm-search
 
 # 2. Set up CLI credentials (one-time)
-claude auth login
+claude          # Claude Code — sign in
 codex auth login
-gemini auth login
+kimi login      # or set KIMI_API_KEY
+agy             # Gemini — sign in with your Google account (OAuth); powers the gemini provider
 
-# 3. Build and run
-docker compose up -d --build
+# 3. Build and run (HOST_UID matches container user to your host for cred mounts)
+HOST_UID=$(id -u) docker compose up -d --build
 
 # 4. Test the API
 curl -X POST http://localhost:8041/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model": "gemini/search-fast", "messages": [{"role": "user", "content": "What is the current price of Bitcoin?"}]}'
+  -d '{"model": "gemini", "messages": [{"role": "user", "content": "What is the current price of Bitcoin?"}]}'
 ```
 
 ---
@@ -42,11 +45,13 @@ You need CLI credentials for at least one provider:
 
 | Provider | Credential File | Setup Command |
 |----------|----------------|---------------|
-| **Claude** | `~/.claude/.credentials.json` | `claude auth login` |
+| **Claude** | `~/.claude/.credentials.json` | `claude` |
 | **Codex** | `~/.codex/auth.json` | `codex auth login` |
-| **Gemini** | `~/.gemini/oauth_creds.json` | `gemini auth login` |
+| **Kimi** | `~/.kimi/credentials/kimi-code.json` | `kimi login` (or `KIMI_API_KEY`) |
+| **Gemini** (via `agy`) | `~/.gemini/antigravity-cli/antigravity-oauth-token` | `agy` (Google OAuth) |
 
 These credentials are automatically mounted into the Docker container and synced every 30 seconds.
+The Gemini provider runs through Google's Antigravity CLI (`agy`), which is **OAuth-only** — it drives your Google AI subscription login; no API key is used.
 
 ### Environment Variables
 
@@ -57,7 +62,7 @@ These credentials are automatically mounted into the Docker container and synced
 | `LLM_SEARCH_HOST` | `0.0.0.0` | API bind address |
 | `CLAUDE_MODEL` | `haiku` | Default Claude model |
 | `CODEX_MODEL` | `gpt-5.5` | Default Codex model |
-| `GEMINI_MODEL` | `gemini-3-flash-preview` | Default Gemini model |
+| `GEMINI_MODEL` | `Gemini 3.5 Flash (Low)` | agy model alias the `gemini` provider is pinned to (thinking level is baked into the name; see `agy models`) |
 
 ### Docker Compose Port Mapping
 
@@ -96,7 +101,8 @@ curl -X POST http://localhost:8041/v1/chat/completions \
 |----------|--------------|-------------|
 | `claude` | `claude/haiku` | Claude Code with WebSearch tool |
 | `codex` | `codex/gpt-5.5` | OpenAI Codex with web search |
-| `gemini` | `gemini/search-fast` | Gemini CLI with Google Web Search |
+| `kimi` | `kimi` | Kimi (MoonshotAI) with web search |
+| `gemini` | `gemini` | Google web search via the Antigravity CLI (`agy`) on your subscription OAuth; pinned to a Gemini model (the model field is ignored) |
 
 **Response with citations:**
 
@@ -105,7 +111,7 @@ curl -X POST http://localhost:8041/v1/chat/completions \
   "id": "chatcmpl-abc123",
   "object": "chat.completion",
   "created": 1712345678,
-  "model": "gemini/search-fast",
+  "model": "gemini",
   "choices": [{
     "index": 0,
     "message": {
@@ -145,9 +151,10 @@ curl http://localhost:8041/health
 ```bash
 curl http://localhost:8041/providers
 # {
-#   "claude": {"default_model": "haiku", "default_timeout": 180},
-#   "codex": {"default_model": "gpt-5.5", "default_timeout": 180},
-#   "gemini": {"default_model": "gemini-3-flash-preview", "default_timeout": 180}
+#   "claude": {"default_model": "haiku", "default_timeout": 290},
+#   "codex": {"default_model": "gpt-5.5", "default_timeout": 290},
+#   "kimi": {"default_model": "", "default_timeout": 290},
+#   "gemini": {"default_model": "Gemini 3.5 Flash (Low)", "default_timeout": 290}
 # }
 ```
 
@@ -162,8 +169,11 @@ python -m llm_search.providers.claude "What is quantum computing?" -m haiku -v
 # Codex
 python -m llm_search.providers.codex "Latest AI news" -m gpt-5.5 -v
 
-# Gemini
-python -m llm_search.providers.gemini "Bitcoin price today" -m search-fast -v
+# Kimi
+python -m llm_search.providers.kimi "Bitcoin price today" -v
+
+# Gemini (the agy integration; standalone debug entry point)
+python -m llm_search.providers.antigravity "Bitcoin price today" -m "Gemini 3.5 Flash (Low)" -v
 ```
 
 ---
@@ -190,7 +200,7 @@ python -m llm_search.providers.gemini "Bitcoin price today" -m search-fast -v
 │  │                      │                              │       │
 │  ▼                      ▼                              ▼       │
 │ ┌─────────┐       ┌─────────┐                  ┌─────────┐    │
-│ │ Claude  │       │  Codex  │                  │ Gemini  │    │
+│ │ Claude  │       │  Codex  │                  │   agy   │    │
 │ │  CLI    │       │   CLI   │                  │   CLI   │    │
 │ │         │       │         │                  │         │    │
 │ │ stream- │       │ JSONL + │                  │ activity│    │
@@ -227,7 +237,8 @@ python -m llm_search.providers.gemini "Bitcoin price today" -m search-fast -v
 3. **Provider-Specific Parsing**
    - **Claude**: Parses `stream-json` format, extracts WebSearch tool results
    - **Codex**: Captures `RUST_LOG=trace` SSE events + JSONL fallback
-   - **Gemini**: Parses activity logs, resolves Vertex AI redirect URIs
+   - **Gemini** (via `agy`): runs `agy --print` under a PTY, parses markdown citations, resolves Vertex AI redirect URIs
+   - **Kimi**: Parses `stream-json` events, extracts web-search sources
 
 4. **OpenAI Compatibility**
    - Full Chat Completions API spec compliance
@@ -256,12 +267,15 @@ python -m llm_search.providers.gemini "Bitcoin price today" -m search-fast -v
 │   │   └── system_prompt.md     # Shared system prompt
 │   └── providers/               # CLI integrations
 │       ├── __init__.py          # Provider registry
-│       ├── claude.py            # Claude Code integration (346 lines)
-│       ├── codex.py             # Codex integration (346 lines)
-│       └── gemini.py            # Gemini integration (391 lines)
+│       ├── claude.py            # Claude Code integration
+│       ├── codex.py             # Codex integration
+│       ├── kimi.py              # Kimi (MoonshotAI) integration
+│       ├── kimi_parsing.py      # Kimi stream-json parsing
+│       ├── antigravity.py       # Antigravity CLI (agy) integration — backs the gemini provider
+│       ├── vertex_redirect.py   # Shared Vertex grounding-redirect resolver
+│       └── subprocess_safety.py # Subprocess-tree cleanup + env sanitization
 ├── scripts/                     # Operational scripts
 │   ├── sync_creds.py            # Smart credential sync
-│   ├── configure_gemini_settings.py  # Gemini CLI config
 │   ├── integration_test.py      # API integration tests
 │   └── check_rebuild.sh         # Auto-rebuild on updates
 ├── docker/
@@ -322,12 +336,13 @@ def run_search(prompt, model, output_dir, timeout):
 2. **Register in provider registry** (`src/llm_search/providers/__init__.py`):
 
 ```python
-from llm_search.providers import claude, codex, gemini, newprovider
+from llm_search.providers import antigravity, claude, codex, kimi, newprovider
 
 PROVIDER_RUNNERS = {
     "claude": claude.run_search,
     "codex": codex.run_search,
-    "gemini": gemini.run_search,
+    "kimi": kimi.run_search,
+    "gemini": antigravity.run_search_as_gemini,  # gemini is served via agy
     "newprovider": newprovider.run_search,  # Add here
 }
 ```
@@ -336,10 +351,11 @@ PROVIDER_RUNNERS = {
 
 ```python
 PROVIDER_DEFAULTS = {
-    "claude": {"model": "haiku", "timeout": 180},
-    "codex": {"model": "gpt-5.5", "timeout": 180},
-    "gemini": {"model": "gemini-3-flash-preview", "timeout": 180},
-    "newprovider": {"model": "default-model", "timeout": 180},
+    "claude": {"model": "haiku", "timeout": 290},
+    "codex": {"model": "gpt-5.5", "timeout": 290},
+    "kimi": {"model": "", "timeout": 290},
+    "gemini": {"model": "Gemini 3.5 Flash (Low)", "timeout": 290},
+    "newprovider": {"model": "default-model", "timeout": 290},
 }
 ```
 
@@ -414,7 +430,7 @@ Error: Credential file not found
 
 **Fix:** Ensure you've logged into at least one CLI on the host:
 ```bash
-claude auth login    # or codex, or gemini
+claude    # or codex, kimi, or agy (for Gemini)
 docker compose up -d --build
 ```
 

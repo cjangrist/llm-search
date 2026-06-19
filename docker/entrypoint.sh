@@ -7,23 +7,16 @@ UHOME=/home/llmsearch
 
 smart_sync() {
     python3 /app/scripts/sync_creds.py
-    # Fix ownership on any newly synced files
+    # Fix ownership on any newly synced files. ~/.gemini holds agy's antigravity-cli
+    # app-data + OAuth token; the others are claude/codex/kimi creds.
     chown -R llmsearch:llmsearch "$UHOME/.claude" "$UHOME/.codex" "$UHOME/.gemini" "$UHOME/.kimi" 2>/dev/null
-    # Re-apply gemini settings overrides (sync_creds may overwrite settings.json)
-    python3 /app/scripts/configure_gemini_settings.py "$UHOME"
-    chown llmsearch:llmsearch "$UHOME/.gemini/settings.json" 2>/dev/null
 }
 
-# Pre-create writable dirs
-for cli_dir in "$UHOME/.claude" "$UHOME/.codex" "$UHOME/.gemini" "$UHOME/.kimi" "$UHOME/.kimi/credentials"; do
+# Pre-create writable dirs ($UHOME/.gemini/antigravity-cli is agy's app-data + OAuth token dir)
+for cli_dir in "$UHOME/.claude" "$UHOME/.codex" "$UHOME/.gemini" "$UHOME/.gemini/antigravity-cli" "$UHOME/.kimi" "$UHOME/.kimi/credentials"; do
     mkdir -p "$cli_dir"
     chown llmsearch:llmsearch "$cli_dir"
 done
-
-# Symlink system ripgrep so gemini-cli doesn't try to download it
-mkdir -p "$UHOME/.gemini/tmp/bin"
-ln -sf "$(which rg)" "$UHOME/.gemini/tmp/bin/rg"
-chown -R llmsearch:llmsearch "$UHOME/.gemini/tmp"
 
 # Ensure output and logs dirs are writable by llmsearch
 mkdir -p /tmp/llm-search/logs
@@ -47,18 +40,20 @@ for stale_secret in /tmp/llm-search/codex_trace_*.log \
     rm -f "$stale_secret" 2>/dev/null
 done
 
-# Create empty sandbox dir for gemini to work from (nothing to scan)
-GEMINI_SANDBOX_DIR="${GEMINI_SANDBOX_DIR:-/tmp/gemini-sandbox}"
-mkdir -p "$GEMINI_SANDBOX_DIR"
-echo '*' > "$GEMINI_SANDBOX_DIR/.geminiignore"
-chown -R llmsearch:llmsearch "$GEMINI_SANDBOX_DIR"
+# Create the agy (Antigravity) sandbox parent dir. The antigravity provider runs agy
+# with its cwd set to a per-request subdir of this, so agy operates in an isolated,
+# writable workspace instead of the real filesystem. Per-request subdirs are created
+# and cleaned up (moved to .trash) by the provider itself.
+ANTIGRAVITY_SANDBOX_DIR="${ANTIGRAVITY_SANDBOX_DIR:-/tmp/antigravity-sandbox}"
+mkdir -p "$ANTIGRAVITY_SANDBOX_DIR"
+chown -R llmsearch:llmsearch "$ANTIGRAVITY_SANDBOX_DIR"
 
 # Create empty sandbox dir for kimi to work from
 KIMI_SANDBOX_DIR="${KIMI_SANDBOX_DIR:-/tmp/kimi-sandbox}"
 mkdir -p "$KIMI_SANDBOX_DIR"
 chown -R llmsearch:llmsearch "$KIMI_SANDBOX_DIR"
 
-# Initial sync (includes settings override)
+# Initial sync
 smart_sync
 
 # Background refresh every 30s
@@ -67,8 +62,8 @@ smart_sync
 # Warm up Node.js module caches in background (don't block startup)
 (gosu llmsearch timeout 15 claude --version >/dev/null 2>&1;
  gosu llmsearch timeout 15 codex --version >/dev/null 2>&1;
- gosu llmsearch timeout 15 gemini --version >/dev/null 2>&1;
- gosu llmsearch timeout 15 kimi --version >/dev/null 2>&1) &
+ gosu llmsearch timeout 15 kimi --version >/dev/null 2>&1;
+ gosu llmsearch timeout 15 agy --version >/dev/null 2>&1) &
 
 # Drop privileges and run CMD
 exec gosu llmsearch "$@"

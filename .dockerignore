@@ -1,0 +1,11 @@
+.git/
+tmp/
+trash/
+.aider.chat.history.md
+.claude/
+host_file
+target_file
+**/__pycache__/
+*.pyc
+*.pyo
+.ruff_cache/

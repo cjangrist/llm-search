@@ -46,7 +46,7 @@ def parse_model_field(model_string):
     if not model_string:
         return None, (
             "model must be in format 'provider/model' or just 'provider' "
-            "(e.g. 'codex', 'claude/haiku', 'gemini/gemini-3-flash-preview')"
+            "(e.g. 'codex', 'claude/haiku', 'gemini', 'kimi')"
         )
     if "/" not in model_string:
         if model_string in PROVIDER_RUNNERS:
@@ -67,7 +67,8 @@ PROVIDER_ARTEFACT_TEMPLATES = {
     # to read during the request — it just doesn't escape to the host.
     "codex": ["codex_raw_{rid}.jsonl", "codex_search_{rid}.json"],
     "claude": ["claude_raw_{rid}.json", "claude_search_{rid}.json"],
-    "gemini": ["gemini_raw_{rid}.json", "gemini_grounding_{rid}.json", "gemini_activity_{rid}.jsonl"],
+    # gemini is now served via agy (antigravity backend), so it writes antigravity_* artefacts.
+    "gemini": ["antigravity_raw_{rid}.json", "antigravity_search_{rid}.json"],
     "kimi": ["kimi_raw_{rid}.json", "kimi_search_{rid}.json", "kimi_stderr_{rid}.log"],
 }
 

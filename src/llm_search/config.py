@@ -19,7 +19,7 @@ HOST = os.getenv("LLM_SEARCH_HOST", "0.0.0.0")
 PROVIDER_DEFAULTS = {
     "claude": {"model": "haiku", "timeout": 290},
     "codex": {"model": "gpt-5.5", "timeout": 290},
-    "gemini": {"model": "gemini-3-flash-preview", "timeout": 290},
+    "gemini": {"model": "Gemini 3.5 Flash (Low)", "timeout": 290},
     "kimi": {"model": "", "timeout": 290},
 }
 
@@ -32,14 +32,21 @@ CLAUDE_ALLOWED_TOOLS = ["WebSearch"]
 CODEX_DEFAULT_MODEL = os.getenv("CODEX_MODEL", "gpt-5.5")
 CODEX_DEFAULT_OUTPUT_DIR = os.getenv("CODEX_OUTPUT_DIR", "/tmp")
 
-# --- Gemini ---
-GEMINI_DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
-GEMINI_DEFAULT_OUTPUT_DIR = os.getenv("GEMINI_OUTPUT_DIR", "/tmp")
-GEMINI_SANDBOX_DIR = os.getenv("GEMINI_SANDBOX_DIR", "/tmp/gemini-sandbox")
-GEMINI_SCRIPT_PATH = os.getenv("GEMINI_SCRIPT_PATH", "")
+# --- Gemini (served via agy; the standalone gemini CLI was retired for consumer accounts) ---
+# agy model alias — thinking level is baked into the name (see `agy models`). "(Low)" = low thinking.
+GEMINI_DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "Gemini 3.5 Flash (Low)")
+# Vertex grounding-redirect prefix — both the gemini and antigravity providers emit these;
+# vertex_redirect.py follows them to the real source URLs.
 VERTEX_REDIRECT_PREFIX = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/"
 
 # --- Kimi ---
 KIMI_DEFAULT_MODEL = os.getenv("KIMI_MODEL", "")
 KIMI_DEFAULT_OUTPUT_DIR = os.getenv("KIMI_OUTPUT_DIR", "/tmp")
 KIMI_SANDBOX_DIR = os.getenv("KIMI_SANDBOX_DIR", "/tmp/kimi-sandbox")
+
+# --- Antigravity CLI (agy) — the agy integration that backs the `gemini` provider.
+# OAuth-only; drives the host's Google AI subscription login. Not a separate provider. ---
+ANTIGRAVITY_BINARY = os.getenv("ANTIGRAVITY_BINARY", "agy")
+ANTIGRAVITY_DEFAULT_MODEL = os.getenv("ANTIGRAVITY_MODEL", "")
+ANTIGRAVITY_DEFAULT_OUTPUT_DIR = os.getenv("ANTIGRAVITY_OUTPUT_DIR", "/tmp")
+ANTIGRAVITY_SANDBOX_DIR = os.getenv("ANTIGRAVITY_SANDBOX_DIR", "/tmp/antigravity-sandbox")

@@ -2,6 +2,13 @@
 
 OpenAI-compatible `stream: true` for the `llm-search` Flask + gunicorn API at `/v1/chat/completions`.
 
+> ⚠️ **Stale provider topology (2026-06-19):** since this plan was written, the standalone
+> `gemini-cli` was retired (Google `IneligibleTierError` for consumer accounts). The `gemini`
+> provider is now served by the Antigravity CLI (`agy`). `agy` has **no `stream-json` output
+> mode** — it renders to a PTY — so the incremental (option B) approach in §5c for gemini no
+> longer applies; the `agy`-backed gemini provider can only use post-hoc chunking (option A).
+> Revisit §5 provider mappings when implementing.
+
 This document is **grounded in the live OpenAI spec, the WHATWG SSE Living Standard, and
 the canonical `openai-python` SDK source** (which is generated from the same OpenAPI
 schema the docs render). The fetched-on dates seen on each source are listed under
@@ -723,7 +730,7 @@ curl -N -sS http://127.0.0.1:8041/v1/chat/completions \
 # Gemini
 curl -N -sS http://127.0.0.1:8041/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"gemini/gemini-3-flash-preview","messages":[{"role":"user","content":"What movies came out this week?"}],"stream":true}'
+  -d '{"model":"gemini","messages":[{"role":"user","content":"What movies came out this week?"}],"stream":true}'
 
 # Kimi
 curl -N -sS http://127.0.0.1:8041/v1/chat/completions \

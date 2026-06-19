@@ -1,11 +1,13 @@
 """Subprocess-tree cleanup helpers shared across providers.
 
-The `sh` library's `_timeout` only kills the immediate child. CLIs like bun, gemini-cli, and
-kimi-cli spawn helpers (node, python, etc.) which become orphaned when the parent dies — they
-keep holding credential files, keep emitting trace output, and (in the worst case) keep making
-upstream API calls. Wrap every sh.* invocation with `_new_session=True` so the immediate child
-is a session leader, and pass `_done=kill_subprocess_tree_on_done()` so the whole pgroup dies
-the instant sh reaps the leader (no PID-reuse race window between reap and a finally-block kill).
+The `sh` library's `_timeout` only kills the immediate child. CLIs like kimi-cli and agy
+(Antigravity, which forks a Go language-server) spawn helpers that become orphaned when the
+parent dies — they keep holding credential files, keep emitting trace output, and (in the
+worst case) keep making upstream API calls. Pass `_done=kill_subprocess_tree_on_done()` so the
+whole pgroup dies the instant sh reaps the leader (no PID-reuse race window between reap and a
+finally-block kill). Most providers also set `_new_session=True` so the child is a session
+leader; the antigravity provider is the exception — it runs agy under a `_tty_out` PTY whose
+controlling terminal `_new_session` would detach, breaking agy's TUI.
 """
 
 import logging

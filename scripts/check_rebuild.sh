@@ -11,10 +11,11 @@ PROJECT_DIRECTORY="$(cd "$SCRIPT_DIRECTORY/.." && pwd)"
 VERSION_FILE="$PROJECT_DIRECTORY/.package-versions"
 LOG_FILE="$PROJECT_DIRECTORY/.rebuild.log"
 
+# npm-installed CLIs only. gemini-cli was removed (retired for consumer accounts; gemini is
+# now served via agy, which self-updates). kimi-cli (uv) and agy (curl) aren't tracked here.
 PACKAGES=(
     "@anthropic-ai/claude-code"
     "@openai/codex"
-    "@google/gemini-cli"
 )
 
 log() {

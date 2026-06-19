@@ -24,9 +24,10 @@ CREDENTIAL_PAIRS = [
     ("/mnt/creds/codex/config.toml", f"{CONTAINER_HOME}/.codex/config.toml"),
     ("/mnt/creds/gemini/oauth_creds.json", f"{CONTAINER_HOME}/.gemini/oauth_creds.json"),
     ("/mnt/creds/gemini/google_accounts.json", f"{CONTAINER_HOME}/.gemini/google_accounts.json"),
-    ("/mnt/creds/gemini/settings.json", f"{CONTAINER_HOME}/.gemini/settings.json"),
     ("/mnt/creds/kimi/config.toml", f"{CONTAINER_HOME}/.kimi/config.toml"),
     ("/mnt/creds/kimi/credentials/kimi-code.json", f"{CONTAINER_HOME}/.kimi/credentials/kimi-code.json"),
+    # Antigravity (agy CLI) OAuth token — lives under the same ~/.gemini mount.
+    ("/mnt/creds/gemini/antigravity-cli/antigravity-oauth-token", f"{CONTAINER_HOME}/.gemini/antigravity-cli/antigravity-oauth-token"),
 ]
 
 TOKEN_FILES = {
@@ -34,6 +35,7 @@ TOKEN_FILES = {
     "auth.json",
     "oauth_creds.json",
     "kimi-code.json",
+    "antigravity-oauth-token",
 }
 
 
@@ -105,11 +107,30 @@ def extract_kimi_expiry(filepath):
         return 0
 
 
+def extract_antigravity_expiry(filepath):
+    """Extract token.expiry (ISO8601 -> ms epoch) from antigravity-oauth-token."""
+    try:
+        with open(filepath) as credential_file:
+            data = json.load(credential_file)
+        expiry = data.get("token", {}).get("expiry", "")
+        if not expiry:
+            return 0
+        # Normalize Go's RFC3339-with-nanoseconds (e.g. 2026-06-19T12:44:18.067257208Z)
+        # to something datetime.fromisoformat accepts: Z -> +00:00, fractional secs to 6 digits.
+        import re
+        from datetime import datetime
+        normalized = re.sub(r"(\.\d{6})\d+", r"\1", expiry.replace("Z", "+00:00"))
+        return int(datetime.fromisoformat(normalized).timestamp() * 1000)
+    except (json.JSONDecodeError, OSError, KeyError, ValueError):
+        return 0
+
+
 EXPIRY_EXTRACTORS = {
     ".credentials.json": extract_claude_expiry,
     "auth.json": extract_codex_expiry,
     "oauth_creds.json": extract_gemini_expiry,
     "kimi-code.json": extract_kimi_expiry,
+    "antigravity-oauth-token": extract_antigravity_expiry,
 }
 
 
