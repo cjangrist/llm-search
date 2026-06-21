@@ -60,7 +60,7 @@ def call_codex(prompt, model, timeout_seconds, trace_log_path, environment):
             "exec",
             "--json",
             "-m", model,
-            "--config", "model_reasoning_effort=medium",
+            "--config", "model_reasoning_effort=low",
             "--config", f"instructions={system_prompt}",
             "--sandbox", "read-only",
             "--skip-git-repo-check",

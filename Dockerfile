@@ -5,11 +5,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv curl git ca-certificates gosu ripgrep unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install CLIs globally via npm (pinned to match host versions as of 2026-06-03).
+# Install CLIs globally via npm (pinned to match host versions as of 2026-06-21).
 # gemini-cli was removed: Google retired it for consumer accounts (IneligibleTierError) —
 # the gemini provider is now served via the Antigravity CLI (agy), installed below.
-ARG CLAUDE_CODE_VERSION=2.1.162
-ARG CODEX_VERSION=0.136.0
+ARG CLAUDE_CODE_VERSION=2.1.185
+ARG CODEX_VERSION=0.141.0
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     "@openai/codex@${CODEX_VERSION}"
 
@@ -32,7 +32,7 @@ RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | env UV_INSTALL_DI
 ENV UV_TOOL_DIR=/opt/uv-tools
 ENV UV_TOOL_BIN_DIR=/usr/local/bin
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
-ARG KIMI_CLI_VERSION=1.46.0
+ARG KIMI_CLI_VERSION=1.47.0
 RUN uv tool install "kimi-cli==${KIMI_CLI_VERSION}" --python 3.12 \
     && chmod -R a+rX /opt/uv-tools /opt/uv-python
 
