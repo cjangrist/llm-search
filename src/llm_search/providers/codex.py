@@ -65,6 +65,8 @@ def call_codex(prompt, model, timeout_seconds, trace_log_path, environment):
             "--sandbox", "read-only",
             "--skip-git-repo-check",
             "--ephemeral",
+            "--ignore-user-config",
+            "--ignore-rules",
             augmented_prompt,
             _env=trace_environment,
             _ok_code=[0, 1],
