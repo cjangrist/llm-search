@@ -46,7 +46,7 @@ RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr
 # installer pulls a pinned prebuilt static binary; install it under a world-readable /opt
 # tree (HOME=/opt/grok) and symlink onto PATH (GROK_BIN_DIR) so the non-root llmsearch user
 # can run it. We pin the version and disable the self-updater (ENV below + --no-auto-update).
-ARG GROK_VERSION=0.2.56
+ARG GROK_VERSION=0.2.59
 RUN HOME=/opt/grok GROK_BIN_DIR=/usr/local/bin \
       bash -c "curl -fsSL https://x.ai/cli/install.sh | bash -s ${GROK_VERSION}" \
     && chmod -R a+rX /opt/grok \
