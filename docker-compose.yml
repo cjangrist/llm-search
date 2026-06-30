@@ -1,5 +1,6 @@
 services:
   llm-search:
+    image: ghcr.io/cjangrist/llm-search:latest
     build:
       context: .
       args:
