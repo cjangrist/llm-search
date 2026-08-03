@@ -16,13 +16,11 @@ services:
     environment:
       - KIMI_API_KEY
     volumes:
-      # Mount each CLI's home directory (RO) instead of individual files so that
-      # atomic-rename token rotations on the host (claude, codex, etc.) are followed.
-      # File bind-mounts capture the inode at startup and do NOT track host renames,
-      # which causes container creds to go stale after the next refresh.
-      - ~/.claude:/mnt/creds/claude:ro
-      - ~/.codex:/mnt/creds/codex:ro
-      - ~/.gemini:/mnt/creds/gemini:ro
-      - ~/.kimi:/mnt/creds/kimi:ro
-      - ~/.grok:/mnt/creds/grok:ro
+      # Direct writable directory mounts preserve CLI logins and atomic token
+      # rotations on the host across restarts and image rebuilds.
+      - ~/.claude:/home/llmsearch/.claude
+      - ~/.codex:/home/llmsearch/.codex
+      - ~/.gemini:/home/llmsearch/.gemini
+      - ~/.kimi:/home/llmsearch/.kimi
+      - ~/.grok:/home/llmsearch/.grok
       - ~/logs/llm-search:/tmp/llm-search/logs

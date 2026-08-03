@@ -51,7 +51,7 @@ You need CLI credentials for at least one provider:
 | **Kimi** | `~/.kimi/credentials/kimi-code.json` | `kimi login` (or `KIMI_API_KEY`) |
 | **Gemini** (via `agy`) | `~/.gemini/antigravity-cli/antigravity-oauth-token` | `agy` (Google OAuth) |
 
-These credentials are automatically mounted into the Docker container and synced every 30 seconds.
+These credential directories are mounted read/write into the Docker container. Logins and token rotations performed inside the container persist directly on the host across restarts and image rebuilds.
 The Gemini provider runs through Google's Antigravity CLI (`agy`), which is **OAuth-only** — it drives your Google AI subscription login; no API key is used.
 
 ### Environment Variables
@@ -235,10 +235,10 @@ python -m llm_search.providers.grok "Latest AI news" -m grok-build -v
    - Complies with each provider's Terms of Service
    - CLIs include built-in rate limiting and retry logic
 
-2. **Credential Synchronization**
-   - Background sync every 30 seconds via [`sync_creds.py`](scripts/sync_creds.py:1)
-   - Smart expiry-aware logic prevents overwriting fresh tokens with stale ones
-   - Extracts and compares JWT `exp` claims, OAuth expiry dates
+2. **Persistent Credentials**
+   - CLI home directories are direct writable bind mounts
+   - Host and container logins share one durable credential store
+   - Atomic token rotations remain visible without a copy or synchronization loop
 
 3. **Provider-Specific Parsing**
    - **Claude**: Parses `stream-json` format, extracts WebSearch tool results
@@ -254,7 +254,7 @@ python -m llm_search.providers.grok "Latest AI news" -m grok-build -v
 
 5. **Non-Root Container Execution**
    - Runs as `llmsearch` user with host UID mapping
-   - Credential files copied from read-only mounts to user-owned directories
+   - Credential directories mounted read/write with matching host ownership
    - Secure sandbox for CLI execution
 
 ---
@@ -283,7 +283,7 @@ python -m llm_search.providers.grok "Latest AI news" -m grok-build -v
 │       ├── vertex_redirect.py   # Shared Vertex grounding-redirect resolver
 │       └── subprocess_safety.py # Subprocess-tree cleanup + env sanitization
 ├── scripts/                     # Operational scripts
-│   ├── sync_creds.py            # Smart credential sync
+│   ├── sync_creds.py            # Legacy one-way credential migration utility
 │   ├── integration_test.py      # API integration tests
 │   └── check_rebuild.sh         # Auto-rebuild on updates
 ├── docker/
@@ -371,7 +371,7 @@ PROVIDER_DEFAULTS = {
 
 ```yaml
 volumes:
-  - ~/.newprovider/creds.json:/mnt/creds/newprovider/creds.json:ro
+  - ~/.newprovider:/home/llmsearch/.newprovider
 ```
 
 No other changes needed. The server will automatically expose the new provider at `/providers` and route requests to it.
@@ -413,8 +413,8 @@ python scripts/integration_test.py --base-url http://localhost:8080
 # Build with custom UID (match your host user)
 docker build --build-arg HOST_UID=$(id -u) -t llm-search .
 
-# Run with Doppler for secret management
-doppler run -- docker compose up -d --build
+# Run with your secret manager's environment injection
+docker compose up -d --build
 ```
 
 ### Auto-Rebuild on CLI Updates
@@ -473,16 +473,18 @@ docker build --build-arg HOST_UID=$(id -u) --no-cache .
 docker compose up -d
 ```
 
-### Credential sync issues
+### Credential mount issues
 
-**Check sync logs:**
+**Check mount ownership:**
 ```bash
-docker exec llm-search-llm-search-1 tail -f /proc/1/fd/2
+docker exec llm-search-llm-search-1 id
+docker exec llm-search-llm-search-1 find /home/llmsearch -maxdepth 1 -type d -name '.*' -printf '%u:%g %m %p\n'
 ```
 
-**Manual sync test:**
+**Verify that login files persist:**
 ```bash
-docker exec -it llm-search-llm-search-1 python3 /app/scripts/sync_creds.py
+docker compose restart llm-search
+docker exec llm-search-llm-search-1 find /home/llmsearch -maxdepth 3 -type f
 ```
 
 ---
