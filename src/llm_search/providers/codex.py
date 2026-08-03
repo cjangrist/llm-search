@@ -365,7 +365,7 @@ def run_search(prompt, model, output_dir, timeout, request_id=None, environment=
 
     Args:
         prompt: The user's search query.
-        model: Codex model name (e.g. "gpt-5.5").
+        model: Codex model name (e.g. "gpt-5.6-luna").
         output_dir: Directory to save intermediate files.
         timeout: CLI timeout in seconds.
         request_id: Per-request id used as the artefact filename suffix (defaults to a fresh uuid hex).
