@@ -26,14 +26,13 @@ logger = logging.getLogger(__name__)
 
 
 def build_claude_environment(parent_environment):
-    """Strip CLAUDE_*/CLAUDECODE_* and credential-shaped vars; force NODE_NO_WARNINGS=1.
+    """Keep Claude's API key and base URL while stripping other provider credentials.
 
-    Claude Code authenticates via the OAuth credentials file at ~/.claude — it never
-    reads ANTHROPIC_API_KEY at print-mode runtime. Strip all credential-shaped env vars
-    (ANTHROPIC_*, OPENAI_*, KIMI_API_KEY, etc.) so a prompt-or-tool escape inside the
-    CLI cannot exfiltrate keys for the other providers from the same gunicorn process.
+    ANTHROPIC_BASE_URL is non-secret and survives normal sanitization. Explicitly allow
+    ANTHROPIC_API_KEY because Claude Code needs it for gateway authentication. Continue
+    stripping Codex, Kimi, and every other credential from the child environment.
     """
-    clean = build_sanitized_environment(parent_environment)
+    clean = build_sanitized_environment(parent_environment, allow_names=("ANTHROPIC_API_KEY",))
     clean = {
         key: value for key, value in clean.items()
         if not key.startswith("CLAUDECODE") and not key.startswith("CLAUDE_CODE_")
@@ -324,7 +323,8 @@ def run_search(prompt, model, output_dir, timeout, request_id=None, environment=
         timeout: CLI timeout in seconds.
         request_id: Per-request id used as the artefact filename suffix (defaults to a fresh uuid hex).
         environment: Process environment dict to inherit (defaults to os.environ).
-            Strips CLAUDECODE_*/CLAUDE_CODE_* keys and sets NODE_NO_WARNINGS=1.
+            Keeps Claude's API key/base URL, strips other provider credentials, and sets
+            NODE_NO_WARNINGS=1.
 
     Returns:
         Tuple of (openai_output_list, model_response_text).

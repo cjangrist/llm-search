@@ -46,12 +46,12 @@ You need CLI credentials for at least one provider:
 
 | Provider | Credential File | Setup Command |
 |----------|----------------|---------------|
-| **Claude** | `~/.claude/.credentials.json` | `claude` |
-| **Codex** | `~/.codex/auth.json` | `codex auth login` |
+| **Claude** | `ANTHROPIC_API_KEY` | Inject the API key through the service environment |
+| **Codex** | `CODEX_API_KEY` + `docker/codex-config.toml` | Inject the API key and mount the secret-free custom-provider config |
 | **Kimi** | `~/.kimi/credentials/kimi-code.json` | `kimi login` (or `KIMI_API_KEY`) |
 | **Gemini** (via `agy`) | `~/.gemini/antigravity-cli/antigravity-oauth-token` | `agy` (Google OAuth) |
 
-These credential directories are mounted read/write into the Docker container. Logins and token rotations performed inside the container persist directly on the host across restarts and image rebuilds.
+OAuth credential directories for Gemini, Kimi, and Grok are mounted read/write into the Docker container. Claude and Codex use API keys from the service environment instead. Logins and token rotations performed inside the container persist directly on the host across restarts and image rebuilds.
 The Gemini provider runs through Google's Antigravity CLI (`agy`), which is **OAuth-only** — it drives your Google AI subscription login; no API key is used.
 
 ### Environment Variables
@@ -64,6 +64,11 @@ The Gemini provider runs through Google's Antigravity CLI (`agy`), which is **OA
 | `CLAUDE_MODEL` | `haiku` | Default Claude model |
 | `CODEX_MODEL` | `gpt-5.5` | Default Codex model |
 | `GEMINI_MODEL` | `Gemini 3.5 Flash (Low)` | agy model alias the `gemini` provider is pinned to (thinking level is baked into the name; see `agy models`) |
+| `ANTHROPIC_BASE_URL` | Anthropic default | Claude Code API base URL |
+| `ANTHROPIC_API_KEY` | unset | Claude Code API key; injected only into the Claude child process |
+| `OPENAI_BASE_URL` | OpenAI default | Codex API base URL, mapped explicitly to the selected `angrist` custom provider |
+| `CODEX_API_KEY` | unset | Codex API key; injected only into the Codex child process |
+| `KIMI_API_KEY` | unset | Kimi API key, rendered into a mode-0600 per-request config file |
 
 ### Docker Compose Port Mapping
 

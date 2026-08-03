@@ -104,20 +104,12 @@ def write_kimi_config_file(api_key, config_path):
 
 
 def discard_kimi_config_file(config_path, output_dir):
-    """Overwrite-then-unlink the api-key TOML so the embedded KIMI_API_KEY is unrecoverable.
+    """Scrub the api-key TOML and move it into a date-stamped trash directory.
 
     The TOML embeds the api key three times verbatim (see API_KEY_CONFIG_TEMPLATE).
-    Earlier revisions moved this file to .trash/YYYYMMDD/ to honor RULE_07's no-rm rule,
-    but RULE_07 covers USER DATA — secrets are not user data, and the secure-delete idiom
-    for secret artefacts is overwrite-then-unlink. Restart-safety / audit-trail value of
-    keeping a key-bearing file is zero (the key is unchanged across requests, so the
-    artefact records only "the key existed").
-
     Cleanup must never throw — we run from a `finally:` block where an unexpected raise
-    masks the original provider exception AND leaves the secret api-key TOML on disk.
-    output_dir is unused but retained for caller-signature stability across the migration.
+    would mask the original provider exception.
     """
-    del output_dir
     try:
         if not config_path or not os.path.isfile(config_path):
             return
@@ -127,8 +119,11 @@ def discard_kimi_config_file(config_path, output_dir):
                 scrub_handle.write(b"\x00" * size)
                 scrub_handle.flush()
                 os.fsync(scrub_handle.fileno())
-        os.unlink(config_path)
-        logger.info("discard_kimi_config_file: scrubbed and unlinked %s (%d bytes)", config_path, size)
+        trash_dir = os.path.join(output_dir, ".trash", datetime.now().strftime("%Y%m%d"))
+        os.makedirs(trash_dir, mode=0o700, exist_ok=True)
+        trashed_path = os.path.join(trash_dir, os.path.basename(config_path))
+        os.replace(config_path, trashed_path)
+        logger.info("discard_kimi_config_file: scrubbed and trashed %s (%d bytes)", config_path, size)
     except OSError as cleanup_error:
         logger.warning("discard_kimi_config_file: cleanup failed for %s: %s", config_path, cleanup_error)
 

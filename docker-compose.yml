@@ -14,12 +14,15 @@ services:
       # still reach localhost:8041; cross-host access requires an explicit reverse proxy.
       - "127.0.0.1:8041:8080"
     environment:
+      - ANTHROPIC_BASE_URL
+      - ANTHROPIC_API_KEY
+      - OPENAI_BASE_URL
+      - CODEX_API_KEY
       - KIMI_API_KEY
     volumes:
       # Direct writable directory mounts preserve CLI logins and atomic token
       # rotations on the host across restarts and image rebuilds.
-      - ~/.claude:/home/llmsearch/.claude
-      - ~/.codex:/home/llmsearch/.codex
+      - ./docker/codex-config.toml:/home/llmsearch/.codex/config.toml:ro
       - ~/.gemini:/home/llmsearch/.gemini
       - ~/.kimi:/home/llmsearch/.kimi
       - ~/.grok:/home/llmsearch/.grok

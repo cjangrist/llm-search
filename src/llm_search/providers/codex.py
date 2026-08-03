@@ -27,22 +27,54 @@ from llm_search.response import find_markdown_links
 logger = logging.getLogger(__name__)
 
 
+def build_codex_environment(parent_environment):
+    """Keep Codex's API key and proxy URL while stripping other provider credentials."""
+    clean_environment = build_sanitized_environment(
+        parent_environment,
+        allow_names=("CODEX_API_KEY",),
+    )
+    clean_environment["RUST_LOG"] = "codex_api=trace"
+    return clean_environment
+
+
+def build_codex_arguments(model, system_prompt, augmented_prompt, base_url):
+    """Build Codex CLI arguments, explicitly selecting and configuring the proxy provider."""
+    arguments = [
+        "-c", "service_tier=fast",
+        "exec",
+        "--json",
+        "-m", model,
+        "--config", "model_reasoning_effort=low",
+        "--config", "tools.disable_defaults=true",
+        "--config", f"instructions={system_prompt}",
+        "--config", 'model_provider="angrist"',
+    ]
+    if base_url:
+        arguments.extend(("--config", f"model_providers.angrist.base_url={json.dumps(base_url)}"))
+    arguments.extend((
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--skip-git-repo-check",
+        "--ephemeral",
+        "--ignore-rules",
+        augmented_prompt,
+    ))
+    return arguments
+
+
 def call_codex(prompt, model, timeout_seconds, trace_log_path, environment):
     """Call Codex CLI in exec mode via sh with JSONL output and RUST_LOG=trace for raw SSE capture.
 
     The trace file captures raw SSE that includes the upstream `Authorization: Bearer …`
     header. Open with mode 0o600 (umask-independent) so it is never world/group readable
-    while the process is alive; the caller is responsible for shred-then-unlink after parse.
+    while the process is alive; the caller is responsible for scrub-then-trash after parse.
     """
     logger.debug("call_codex(model=%s, timeout=%ds, trace_log=%s)", model, timeout_seconds, trace_log_path)
 
-    # Codex authenticates via ~/.codex OAuth credentials, not env. Strip credential-shaped
-    # env vars (ANTHROPIC_*, KIMI_API_KEY, etc.) so a prompt-or-tool escape inside the CLI
-    # cannot exfiltrate keys for the other providers from the same gunicorn process.
-    trace_environment = {**build_sanitized_environment(environment), "RUST_LOG": "codex_api=trace"}
+    trace_environment = build_codex_environment(environment)
     system_prompt = load_system_prompt()
-
     augmented_prompt = f'CRITICAL RULE-> using web_search answer: "{prompt}"'
+    base_url = trace_environment.get("OPENAI_BASE_URL", "").strip()
+    codex_arguments = build_codex_arguments(model, system_prompt, augmented_prompt, base_url)
 
     logger.info("Running: codex exec --json -m %s (with RUST_LOG=codex_api=trace) ...", model)
     fd = os.open(trace_log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -56,19 +88,7 @@ def call_codex(prompt, model, timeout_seconds, trace_log_path, environment):
         raise
     try:
         raw_output = sh.codex(
-            "-c", "service_tier=fast",
-            "exec",
-            "--json",
-            "-m", model,
-            "--config", "model_reasoning_effort=low",
-            "--config", "tools.disable_defaults=true",
-            "--config", f"instructions={system_prompt}",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "--skip-git-repo-check",
-            "--ephemeral",
-            "--ignore-user-config",
-            "--ignore-rules",
-            augmented_prompt,
+            *codex_arguments,
             _env=trace_environment,
             _ok_code=[0, 1],
             _encoding="utf-8",
@@ -89,13 +109,11 @@ def call_codex(prompt, model, timeout_seconds, trace_log_path, environment):
 
 
 def shred_trace_file(trace_log_path):
-    """Overwrite-then-unlink a codex trace file so the embedded bearer token is unrecoverable.
+    """Scrub a codex trace file and move it into a date-stamped trash directory.
 
     The trace file holds the upstream `Authorization: Bearer …` header (RUST_LOG=trace).
-    RULE_07 forbids `rm` of user data; secrets are not user data and the secure-delete
-    idiom is overwrite-then-unlink. Cleanup must never throw — runs from a `finally:`
-    where an unexpected raise masks the original provider exception AND leaves the
-    bearer token on disk.
+    Cleanup must never throw because it runs from a `finally:` block where an unexpected
+    raise would mask the original provider exception.
     """
     try:
         if not trace_log_path or not os.path.isfile(trace_log_path):
@@ -106,8 +124,11 @@ def shred_trace_file(trace_log_path):
                 scrub_handle.write(b"\x00" * size)
                 scrub_handle.flush()
                 os.fsync(scrub_handle.fileno())
-        os.unlink(trace_log_path)
-        logger.info("shred_trace_file: scrubbed and unlinked %s (%d bytes)", trace_log_path, size)
+        trash_dir = os.path.join(os.path.dirname(trace_log_path), ".trash", datetime.now().strftime("%Y%m%d"))
+        os.makedirs(trash_dir, mode=0o700, exist_ok=True)
+        trashed_path = os.path.join(trash_dir, os.path.basename(trace_log_path))
+        os.replace(trace_log_path, trashed_path)
+        logger.info("shred_trace_file: scrubbed and trashed %s (%d bytes)", trace_log_path, size)
     except OSError as cleanup_error:
         logger.warning("shred_trace_file: cleanup failed for %s: %s", trace_log_path, cleanup_error)
 
@@ -370,7 +391,8 @@ def run_search(prompt, model, output_dir, timeout, request_id=None, environment=
         timeout: CLI timeout in seconds.
         request_id: Per-request id used as the artefact filename suffix (defaults to a fresh uuid hex).
         environment: Process environment dict to inherit (defaults to os.environ).
-            RUST_LOG=codex_api=trace is overlaid on top to capture SSE events.
+            Keeps Codex's API key/base URL, strips other provider credentials, and
+            overlays RUST_LOG=codex_api=trace to capture SSE events.
 
     Returns:
         Tuple of (openai_output_list, model_response_text).

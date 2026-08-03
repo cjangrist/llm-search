@@ -1,0 +1,8 @@
+model_provider = "angrist"
+
+[model_providers.angrist]
+name = "Angrist AI"
+base_url = "https://ai.angrist.net/v1"
+env_key = "CODEX_API_KEY"
+wire_api = "responses"
+supports_standalone_web_search = true
